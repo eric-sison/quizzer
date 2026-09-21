@@ -79,8 +79,12 @@ impl LockdownReport {
 
 /// Developer escape hatch. Honoured only in debug builds - a release binary
 /// ignores the flag entirely, so it cannot be used to soften a real exam.
+///
+/// Also always on under `cargo test`: the command tests drive `start_session`
+/// for real, and without this a test run would hide the developer's Dock and
+/// disable their Cmd+Tab.
 pub fn is_bypassed() -> bool {
-    cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--unlocked")
+    cfg!(test) || (cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--unlocked"))
 }
 
 /// Put the window into its at-rest exam-app shape, before any exam exists.
