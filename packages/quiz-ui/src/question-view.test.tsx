@@ -604,6 +604,28 @@ describe("matching answers", () => {
     await show(projected(matchingQ()), { readOnly: true, value: ["stale-id"] })
     expect(container.textContent).toContain("Mitochondrion")
   })
+
+  it("shows the chosen match by name on the closed control, never its id", async () => {
+    const q = matchingQ()
+    const manifest = projected(q)
+    if (q.kind !== "matching") throw new Error("expected matching")
+    const rightId = q.pairs[0]!.rightId
+
+    await show(manifest, { value: { [q.pairs[0]!.leftId]: rightId }, onChange: () => {} })
+
+    const trigger = container.querySelector('[aria-label^="Match for"]')!
+    // Base UI renders the raw value here unless the root is handed an item
+    // map, and the raw value is an opaque id no student can read.
+    expect(trigger.textContent).toContain("ATP")
+    expect(trigger.textContent).not.toContain(rightId)
+  })
+
+  it("shows the placeholder while nothing is chosen", async () => {
+    await show(projected(matchingQ()), { onChange: () => {} })
+
+    const trigger = container.querySelector('[aria-label^="Match for"]')!
+    expect(trigger.textContent).toContain("Choose a match")
+  })
 })
 
 describe("ordering answers", () => {

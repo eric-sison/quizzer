@@ -314,6 +314,21 @@ function MatchingAnswer({
   const labelOf = (id: string | undefined) =>
     rightItems.find((item) => item.id === id)?.label
 
+  /**
+   * Base UI needs this to put a LABEL on the closed trigger. Without it
+   * `Select.Value` renders the raw value, and the value here is an opaque
+   * right-item id - so the student would pick "Mammal" and be shown
+   * "74a969f18a874c4a". The ids cannot be swapped for labels instead: they are
+   * what the answer is stored as, and two right items may read the same.
+   */
+  const rightLabels = React.useMemo(
+    () =>
+      Object.fromEntries(
+        (question.right_items ?? []).map((item) => [item.id, item.label])
+      ),
+    [question.right_items]
+  )
+
   return (
     <div className="flex flex-col gap-2">
       {(question.left_items ?? []).map((left) => {
@@ -333,15 +348,22 @@ function MatchingAnswer({
                 {labelOf(chosen) ?? "—"}
               </span>
             ) : (
-              <div className="w-52">
+              <div className="w-64">
                 <Select
+                  items={rightLabels}
                   value={chosen ?? null}
                   onValueChange={(next) => {
                     if (typeof next !== "string") return
                     answer.onChange?.({ ...record, [left.id]: next })
                   }}
                 >
-                  <SelectTrigger aria-label={`Match for "${left.label}"`}>
+                  {/* The trigger is `w-fit` by default, which left it floating
+                      short of the row's edge. Fill the column instead, so every
+                      row's control lines up on the right. */}
+                  <SelectTrigger
+                    className="w-full"
+                    aria-label={`Match for "${left.label}"`}
+                  >
                     <SelectValue placeholder="Choose a match…" />
                   </SelectTrigger>
                   <SelectContent>
