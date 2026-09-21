@@ -13,6 +13,12 @@ function ThemeProvider({
       defaultTheme="system"
       enableSystem
       disableTransitionOnChange
+      // The anti-flash script only needs to run during HTML parsing; rendering
+      // it as text/plain on the client keeps React from warning about script
+      // tags (see Next's preventing-flash-before-hydration guide).
+      scriptProps={{
+        type: typeof window === "undefined" ? "text/javascript" : "text/plain",
+      }}
       {...props}
     >
       <ThemeHotkey />
