@@ -6,13 +6,24 @@
  * forbidden: answering 403 would confirm the id exists, which is a small
  * disclosure with no upside.
  */
-import { createQuizDoc, type QuizDetail, type QuizDoc, type QuizSummary } from "@workspace/quiz-core"
-import { and, desc, eq, isNull, sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
+
+import { CopyObjectCommand } from "@aws-sdk/client-s3"
+import {
+  cloneQuizDoc,
+  collectMediaIds,
+  createQuizDoc,
+  type QuizDetail,
+  type QuizDoc,
+  type QuizSummary,
+} from "@workspace/quiz-core"
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm"
 
 import { db } from "../db"
-import { examLinks, quizVersions, quizzes } from "../db/schema"
+import { examLinks, quizMedia, quizVersions, quizzes } from "../db/schema"
 import { env } from "../env"
 import { conflict, notFound } from "../lib/errors"
+import { MEDIA_BUCKET, s3 } from "../lib/s3"
 
 function linkUrl(token: string | null): string | null {
   return token ? `${env.PUBLIC_API_ORIGIN}/e/${token}` : null
@@ -98,6 +109,89 @@ export async function createQuiz(teacherId: string, title?: string): Promise<Qui
     token: null,
     url: null,
   }
+}
+
+/**
+ * Copy a quiz into a fresh draft: every question and nested id re-minted, and
+ * every referenced image duplicated - media authorization is scoped by quiz
+ * id, so a copy that kept the source's media ids would 404 for its own exam
+ * sessions the moment the source is archived.
+ */
+export async function duplicateQuiz(teacherId: string, quizId: string): Promise<QuizDetail> {
+  const [source] = await db
+    .select({ title: quizzes.title, draftDoc: quizzes.draftDoc })
+    .from(quizzes)
+    .where(
+      and(eq(quizzes.id, quizId), eq(quizzes.ownerId, teacherId), isNull(quizzes.archivedAt))
+    )
+    .limit(1)
+  if (!source) throw notFound("No such quiz.")
+
+  const title = `${source.title} (copy)`.slice(0, 200)
+  const doc: QuizDoc = { ...source.draftDoc, title }
+
+  // Only media the document still references; replaced images stay behind.
+  const referencedIds = collectMediaIds(doc)
+  const rows =
+    referencedIds.length > 0
+      ? await db
+          .select({
+            id: quizMedia.id,
+            contentType: quizMedia.contentType,
+            sizeBytes: quizMedia.sizeBytes,
+          })
+          .from(quizMedia)
+          .where(and(eq(quizMedia.quizId, quizId), inArray(quizMedia.id, referencedIds)))
+      : []
+
+  const mediaIdMap: Record<string, string> = {}
+  for (const row of rows) mediaIdMap[row.id] = randomUUID()
+
+  // Objects before rows - the inverse of the upload path's order, on purpose:
+  // failing here leaves orphaned bucket objects (harmless garbage), whereas
+  // rows-first would leave a quiz whose images 404 for students.
+  for (const row of rows) {
+    await s3.send(
+      new CopyObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        CopySource: `${MEDIA_BUCKET}/${row.id}`,
+        Key: mediaIdMap[row.id],
+        MetadataDirective: "COPY",
+      })
+    )
+  }
+
+  const cloned = cloneQuizDoc(doc, mediaIdMap)
+
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(quizzes)
+      .values({ ownerId: teacherId, title: cloned.title, draftDoc: cloned })
+      .returning()
+    if (!row) throw new Error("duplicate insert returned no row")
+
+    if (rows.length > 0) {
+      await tx.insert(quizMedia).values(
+        rows.map((media) => ({
+          id: mediaIdMap[media.id],
+          quizId: row.id,
+          uploadedBy: teacherId,
+          contentType: media.contentType,
+          sizeBytes: media.sizeBytes,
+        }))
+      )
+    }
+
+    return {
+      id: row.id,
+      status: row.status,
+      doc: row.draftDoc,
+      docVersion: row.docVersion,
+      hasUnpublishedChanges: false,
+      token: null,
+      url: null,
+    }
+  })
 }
 
 export async function getQuiz(teacherId: string, quizId: string): Promise<QuizDetail> {

@@ -95,6 +95,7 @@ export async function previewExam(token: string): Promise<PreviewExamResponse> {
 
   return {
     title: manifest.title,
+    ...(manifest.description ? { description: manifest.description } : {}),
     duration_s: manifest.duration_s,
     allow_backtracking: manifest.allow_backtracking,
     shuffle_questions: manifest.shuffle_questions ?? false,

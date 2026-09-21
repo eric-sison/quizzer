@@ -45,6 +45,7 @@ linkRoutes.get("/e/:token", async (c) => {
         heading: "This exam is closed",
         body: "Your teacher has taken this link out of service.",
         title: link.title,
+        description: link.description,
       }),
       410
     )
@@ -55,6 +56,7 @@ linkRoutes.get("/e/:token", async (c) => {
       heading: "Open this in Quizzer Exam",
       body: "Copy the address below, start the Quizzer Exam app, and paste it when it asks for your quiz link. Opening it in a browser will not start the exam.",
       title: link.title,
+      description: link.description,
       // Built from configuration, never from the request. Echoing `c.req.url`
       // would print whatever host reached this process, so a forwarded or
       // spoofed Host header would show the student an address to trust that we
@@ -73,11 +75,14 @@ function page({
   heading,
   body,
   title,
+  description,
   link,
 }: {
   heading: string
   body: string
   title?: string
+  /** Teacher-authored, like the title: interpolated through html\`\`, escaped. */
+  description?: string
   link?: string
 }) {
   return html`<!doctype html>
@@ -96,6 +101,7 @@ function page({
           <p class="brand">Quizzer</p>
           <h1>${heading}</h1>
           ${title ? html`<p class="quiz">${title}</p>` : ""}
+          ${description ? html`<p class="desc">${description}</p>` : ""}
           <p class="body">${body}</p>
           ${link ? html`<p class="link"><code>${link}</code></p>` : ""}
           <p class="foot">
@@ -139,6 +145,7 @@ const STYLES = `
   }
   h1 { margin: 0 0 8px; font-size: 20px; line-height: 1.3; }
   .quiz { margin: 0 0 16px; font-weight: 600; }
+  .desc { margin: -8px 0 16px; white-space: pre-line; }
   .body { margin: 0 0 20px; color: #3d4f52; }
   .link { margin: 0 0 20px; }
   code {

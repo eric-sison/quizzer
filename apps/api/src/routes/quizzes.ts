@@ -8,11 +8,12 @@ import { z } from "zod"
 import type { AppEnv } from "../lib/hono"
 import { validate } from "../lib/validate"
 import { requireTeacher } from "../middleware/auth"
-import { readImageForTeacher, uploadQuizImage } from "../services/media"
+import { listQuizMedia, readImageForTeacher, uploadQuizImage } from "../services/media"
 import { publishQuiz, unpublishQuiz } from "../services/publish"
 import {
   archiveQuiz,
   createQuiz,
+  duplicateQuiz,
   getQuiz,
   listQuizzes,
   saveDraft,
@@ -78,6 +79,26 @@ quizRoutes.delete("/api/quizzes/:id", validate("param", quizIdParam), async (c) 
   await archiveQuiz(c.get("teacher").id, id)
   return c.body(null, 204)
 })
+
+/** Copy a quiz into a fresh draft, images duplicated with it. */
+quizRoutes.post(
+  "/api/quizzes/:id/duplicate",
+  validate("param", quizIdParam),
+  async (c) => {
+    const { id } = c.req.valid("param")
+    return c.json(await duplicateQuiz(c.get("teacher").id, id), 201)
+  }
+)
+
+/** The quiz's media library, for the editor's reuse picker. */
+quizRoutes.get(
+  "/api/quizzes/:id/media",
+  validate("param", quizIdParam),
+  async (c) => {
+    const { id } = c.req.valid("param")
+    return c.json(await listQuizMedia(c.get("teacher").id, id))
+  }
+)
 
 /**
  * Upload one question image: raw bytes, typed by the Content-Type header. The

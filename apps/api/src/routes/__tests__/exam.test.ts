@@ -77,7 +77,10 @@ function questions(): Question[] {
 }
 
 /** Publish a quiz and hand back its link token. */
-async function publishedQuiz(durationS = 2_700): Promise<PublishResponse> {
+async function publishedQuiz(
+  durationS = 2_700,
+  description?: string
+): Promise<PublishResponse> {
   const created = (await (
     await app.request("/api/quizzes", {
       method: "POST",
@@ -89,6 +92,7 @@ async function publishedQuiz(durationS = 2_700): Promise<PublishResponse> {
   const base = createQuizDoc("Exam surface")
   const doc = {
     ...base,
+    ...(description === undefined ? {} : { description }),
     settings: { ...base.settings, durationS },
     questions: questions(),
   }
@@ -178,6 +182,31 @@ describe("POST /api/exam/preview", () => {
       question_count: 3,
       shuffle_questions: false,
     })
+  })
+
+  it("carries the published description, escaped on the landing page too", async () => {
+    const link = await publishedQuiz(600, 'Bring a calculator. <script>alert(1)</script>')
+
+    const preview = await previewExam(link.token)
+    expect(await preview.json()).toMatchObject({
+      description: "Bring a calculator. <script>alert(1)</script>",
+    })
+
+    const landing = await app.request(`/e/${link.token}`)
+    const htmlBody = await landing.text()
+    // Present, but only as escaped text - never as markup.
+    expect(htmlBody).toContain("Bring a calculator.")
+    expect(htmlBody).not.toContain("<script>alert(1)</script>")
+    expect(htmlBody).toContain("&lt;script&gt;")
+  })
+
+  it("omits the description when the quiz has none", async () => {
+    const link = await publishedQuiz()
+    const preview = (await (await previewExam(link.token)).json()) as Record<
+      string,
+      unknown
+    >
+    expect("description" in preview).toBe(false)
   })
 
   it("claims nothing: previewing does not create a session", async () => {

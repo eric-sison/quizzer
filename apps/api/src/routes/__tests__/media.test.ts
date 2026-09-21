@@ -228,3 +228,115 @@ describe("exam media", () => {
     expect(res.status).toBe(404)
   })
 })
+
+describe("media library listing", () => {
+  it("lists the quiz's media newest first, and only its own", async () => {
+    const quiz = await newQuiz(owner)
+    const other = await newQuiz(owner)
+    const { id: mine } = (await (await upload(owner, quiz.id)).json()) as { id: string }
+    await upload(owner, other.id)
+
+    const res = await app.request(`/api/quizzes/${quiz.id}/media`, {
+      headers: headers(owner),
+    })
+    expect(res.status).toBe(200)
+    const items = (await res.json()) as { id: string; contentType: string }[]
+
+    expect(items.map((i) => i.id)).toEqual([mine])
+    expect(items[0]).toMatchObject({ contentType: "image/png", sizeBytes: PIXEL_PNG.length })
+  })
+
+  it("is empty for a quiz with no uploads and hidden from strangers", async () => {
+    const quiz = await newQuiz(owner)
+
+    const empty = await app.request(`/api/quizzes/${quiz.id}/media`, {
+      headers: headers(owner),
+    })
+    expect(await empty.json()).toEqual([])
+
+    const res = await app.request(`/api/quizzes/${quiz.id}/media`, {
+      headers: headers(stranger),
+    })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe("duplicating a quiz", () => {
+  /** A draft whose prompt carries the uploaded image. */
+  async function quizWithImage() {
+    const quiz = await newQuiz(owner)
+    const uploaded = await upload(owner, quiz.id)
+    const { id: mediaId } = (await uploaded.json()) as { id: string }
+
+    const base = createQuizDoc("With pictures")
+    const doc = {
+      ...base,
+      questions: [
+        {
+          ...createQuestion("true_false"),
+          correct: true,
+          promptDoc: {
+            type: "doc" as const,
+            content: [
+              ...richDocFromText("Look:").content,
+              { type: "image" as const, attrs: { mediaId, alt: "Pixel" } },
+            ],
+          },
+        },
+      ],
+    }
+    await app.request(`/api/quizzes/${quiz.id}/draft`, {
+      method: "PUT",
+      headers: { ...headers(owner), "Content-Type": "application/json" },
+      body: JSON.stringify({ doc, docVersion: quiz.docVersion }),
+    })
+    return { quiz, mediaId, doc }
+  }
+
+  it("re-mints ids and duplicates the media, surviving the source's deletion", async () => {
+    const { quiz, mediaId, doc } = await quizWithImage()
+
+    const res = await app.request(`/api/quizzes/${quiz.id}/duplicate`, {
+      method: "POST",
+      headers: headers(owner),
+    })
+    expect(res.status).toBe(201)
+    const copy = (await res.json()) as {
+      id: string
+      doc: { title: string; questions: { id: string; promptDoc: unknown }[] }
+    }
+
+    expect(copy.id).not.toBe(quiz.id)
+    expect(copy.doc.title).toBe("With pictures (copy)")
+    expect(copy.doc.questions[0]!.id).not.toBe(doc.questions[0]!.id)
+
+    // The copy references a NEW media id...
+    const serialised = JSON.stringify(copy.doc)
+    expect(serialised).not.toContain(mediaId)
+    const match = /"mediaId":"([0-9a-f-]{36})"/.exec(serialised)
+    expect(match).not.toBeNull()
+    const newMediaId = match![1]!
+
+    // ...whose bytes are identical...
+    const img = await app.request(`/api/media/${newMediaId}`, { headers: headers(owner) })
+    expect(img.status).toBe(200)
+    expect(new Uint8Array(await img.arrayBuffer())).toEqual(PIXEL_PNG)
+
+    // ...and which keeps serving after the source quiz (and its media) is gone.
+    await app.request(`/api/quizzes/${quiz.id}`, {
+      method: "DELETE",
+      headers: headers(owner),
+    })
+    const after = await app.request(`/api/media/${newMediaId}`, { headers: headers(owner) })
+    expect(after.status).toBe(200)
+  })
+
+  it("is owner-scoped", async () => {
+    const { quiz } = await quizWithImage()
+    const res = await app.request(`/api/quizzes/${quiz.id}/duplicate`, {
+      method: "POST",
+      headers: headers(stranger),
+    })
+    expect(res.status).toBe(404)
+  })
+})

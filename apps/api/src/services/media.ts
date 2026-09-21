@@ -11,8 +11,12 @@
  * being an unguessable UUID is not the access control; these checks are.
  */
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3"
-import { isImageContentType, MAX_IMAGE_BYTES } from "@workspace/quiz-core"
-import { and, eq, isNull } from "drizzle-orm"
+import {
+  isImageContentType,
+  MAX_IMAGE_BYTES,
+  type QuizMediaItem,
+} from "@workspace/quiz-core"
+import { and, desc, eq, isNull } from "drizzle-orm"
 
 import { db } from "../db"
 import { quizMedia, quizVersions, quizzes } from "../db/schema"
@@ -80,6 +84,34 @@ export async function uploadQuizImage(
   )
 
   return { id: row.id }
+}
+
+/** The quiz's media library, newest first, for the reuse picker. */
+export async function listQuizMedia(
+  teacherId: string,
+  quizId: string
+): Promise<QuizMediaItem[]> {
+  const [quiz] = await db
+    .select({ id: quizzes.id })
+    .from(quizzes)
+    .where(
+      and(eq(quizzes.id, quizId), eq(quizzes.ownerId, teacherId), isNull(quizzes.archivedAt))
+    )
+    .limit(1)
+  if (!quiz) throw new ApiError("not_found", 404, "No such quiz.")
+
+  const rows = await db
+    .select({
+      id: quizMedia.id,
+      contentType: quizMedia.contentType,
+      sizeBytes: quizMedia.sizeBytes,
+      createdAt: quizMedia.createdAt,
+    })
+    .from(quizMedia)
+    .where(eq(quizMedia.quizId, quizId))
+    .orderBy(desc(quizMedia.createdAt))
+
+  return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }))
 }
 
 /** An image belonging to any quiz this teacher owns. */
