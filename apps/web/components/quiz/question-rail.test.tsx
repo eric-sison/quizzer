@@ -100,3 +100,58 @@ describe("question rail", () => {
     expect(container.textContent).toContain("issue")
   })
 })
+
+describe("rail search", () => {
+  const searchable: Question[] = [
+    { ...createQuestion("essay"), promptDoc: promptOf("Photosynthesis basics") },
+    { ...createQuestion("essay"), promptDoc: promptOf("Mitochondria and ATP") },
+    { ...createQuestion("essay"), promptDoc: promptOf("Cell walls in plants") },
+  ]
+
+  function promptOf(text: string) {
+    return {
+      type: "doc" as const,
+      content: [
+        { type: "paragraph" as const, content: [{ type: "text" as const, text }] },
+      ],
+    }
+  }
+
+  function search(value: string) {
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Search questions"]'
+    )!
+    const setValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!
+    setValue.call(input, value)
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  }
+
+  it("filters by prompt text but keeps the original numbering", async () => {
+    await mount({ questions: searchable })
+    await act(async () => search("cell"))
+
+    expect(container.textContent).toContain("Cell walls in plants")
+    expect(container.textContent).not.toContain("Photosynthesis basics")
+    // The match is question 3 and must still say 3, not 1.
+    expect(container.textContent).toContain("3")
+    expect(container.textContent).toContain("1/3")
+  })
+
+  it("disables reordering while filtering, and restores it when cleared", async () => {
+    await mount({ questions: searchable })
+    await act(async () => search("a"))
+    expect(handles()).toHaveLength(0)
+
+    await act(async () => search(""))
+    expect(handles()).toHaveLength(3)
+  })
+
+  it("says when nothing matches", async () => {
+    await mount({ questions: searchable })
+    await act(async () => search("volcanoes"))
+    expect(container.textContent).toContain("No questions match")
+  })
+})

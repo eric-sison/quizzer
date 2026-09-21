@@ -1,7 +1,11 @@
 "use client"
 
+import * as React from "react"
 import {
   countWords,
+  toPlainText,
+  isImageContentType,
+  MAX_IMAGE_BYTES,
   type Question,
   type QuestionKind,
   type QuestionOfKind,
@@ -12,9 +16,15 @@ import { Checkbox } from "@workspace/ui/components/checkbox"
 import { Label } from "@workspace/ui/components/label"
 import { RichTextEditor } from "@workspace/quiz-ui"
 
+import { useImagePicker } from "@/components/quiz/image-picker-dialog"
 import { QuestionActions } from "@/components/quiz/question-actions"
+import {
+  QuestionMediaProvider,
+  type QuestionMedia,
+} from "@/components/quiz/question-media-context"
 import { QuestionTypeSelect } from "@/components/quiz/question-type-select"
 import { SectionHeader } from "@/components/quiz/section-header"
+import { TeacherOnlyDocEditor } from "@/components/quiz/teacher-only-doc-editor"
 import { uploadQuestionImageAction } from "@/lib/quiz-actions"
 import { typeDef } from "@/lib/quiz/types/registry"
 
@@ -47,7 +57,42 @@ export function QuestionEditor({
   onMove: (delta: number) => void
   onDelete: () => void
 }) {
+  // One picker instance serves the prompt toolbar and every option row.
+  const { pickImage, dialog: pickerDialog } = useImagePicker(
+    quizId,
+    (mediaId) => `/api/media/${mediaId}`
+  )
+
+  // One upload path for the prompt editor and any per-kind editor below (the
+  // option list uses it): validate, hand to the Server Action, return the
+  // minted media id. The context is what lets the registry editors stay
+  // generic while still being able to upload.
+  const media = React.useMemo<QuestionMedia>(
+    () => ({
+      resolveImageSrc: (mediaId) => `/api/media/${mediaId}`,
+      pickImage,
+      uploadImage: async (file) => {
+        // The same limits the API enforces; failing here saves the round trip.
+        if (!isImageContentType(file.type)) {
+          return { error: "Images must be PNG, JPEG, WebP or GIF." }
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+          return {
+            error: `Images are limited to ${Math.floor(MAX_IMAGE_BYTES / (1024 * 1024))} MB.`,
+          }
+        }
+        const formData = new FormData()
+        formData.set("image", file)
+        const result = await uploadQuestionImageAction(quizId, formData)
+        return result.ok ? { mediaId: result.id } : { error: result.message }
+      },
+    }),
+    [quizId, pickImage]
+  )
+
   return (
+    <QuestionMediaProvider value={media}>
+    {pickerDialog}
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-2.5">
         <h2 className="font-heading text-base font-semibold tracking-tight">
@@ -59,6 +104,7 @@ export function QuestionEditor({
         <QuestionActions
           index={index}
           total={total}
+          questionLabel={toPlainText(question.promptDoc).trim() || "Untitled question"}
           onDuplicate={onDuplicate}
           onMove={onMove}
           onDelete={onDelete}
@@ -77,13 +123,9 @@ export function QuestionEditor({
           // Images live inside the prompt document as media ids; the editor
           // displays them through the same-origin proxy, and the upload goes
           // through a Server Action so the service credential stays put.
-          resolveImageSrc={(mediaId) => `/api/media/${mediaId}`}
-          onUploadImage={async (file) => {
-            const formData = new FormData()
-            formData.set("image", file)
-            const result = await uploadQuestionImageAction(quizId, formData)
-            return result.ok ? { mediaId: result.id } : { error: result.message }
-          }}
+          resolveImageSrc={media.resolveImageSrc}
+          onUploadImage={media.uploadImage}
+          onPickImage={media.pickImage}
           meta={
             <span className="font-mono text-[10px] text-muted-foreground">
               {countWords(question.promptDoc)} words
@@ -93,6 +135,19 @@ export function QuestionEditor({
       </div>
 
       <AnswerSection question={question} onChange={onChange} />
+
+      <TeacherOnlyDocEditor
+        label="Answer explanation (teacher only)"
+        value={question.explanationDoc}
+        placeholder="Why this is the answer…"
+        caption="Never sent to students. The explanation is stripped when the quiz is published."
+        onChange={(doc) => {
+          const next = { ...question }
+          if (doc === undefined) delete next.explanationDoc
+          else next.explanationDoc = doc
+          onChange(next)
+        }}
+      />
 
       <div className="flex flex-wrap items-center gap-5 border-t pt-4">
         <PointsStepper
@@ -117,6 +172,7 @@ export function QuestionEditor({
         </span>
       </div>
     </div>
+    </QuestionMediaProvider>
   )
 }
 

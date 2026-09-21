@@ -5,6 +5,7 @@ import { SquareCheckBig } from "lucide-react"
 
 import { OptionListEditor } from "@/components/quiz/option-list-editor"
 import { SelectionSwitch } from "@/components/quiz/selection-switch"
+import { ShuffleOptionsSwitch } from "@/components/quiz/shuffle-options-switch"
 import type { QuestionEditorProps, QuestionTypeDef } from "./registry"
 
 function MultipleChoiceEditor({
@@ -17,6 +18,7 @@ function MultipleChoiceEditor({
       selection="many"
       onChange={(options) => onChange({ ...question, options })}
       action={<SelectionSwitch question={question} onChange={onChange} />}
+      footerExtra={<ShuffleOptionsSwitch question={question} onChange={onChange} />}
     />
   )
 }

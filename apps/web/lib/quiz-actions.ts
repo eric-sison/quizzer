@@ -9,6 +9,7 @@ import {
   type Issue,
   type PublishResponse,
   type QuizDoc,
+  type QuizMediaItem,
 } from "@workspace/quiz-core"
 
 import { ApiClientError, quizApi } from "./api-client"
@@ -69,6 +70,32 @@ export async function uploadQuestionImageAction(
     const bytes = new Uint8Array(await file.arrayBuffer())
     const { id } = await quizApi.uploadImage(quizId, file.type, bytes)
     return { ok: true, id }
+  } catch (error) {
+    return { ok: false, message: describe(error) }
+  }
+}
+
+export type DuplicateQuizResult =
+  | { ok: true; id: string }
+  | { ok: false; message: string }
+
+export async function duplicateQuizAction(id: string): Promise<DuplicateQuizResult> {
+  try {
+    const copy = await quizApi.duplicate(id)
+    revalidatePath("/quizzes")
+    return { ok: true, id: copy.id }
+  } catch (error) {
+    return { ok: false, message: describe(error) }
+  }
+}
+
+export type ListQuizImagesResult =
+  | { ok: true; images: QuizMediaItem[] }
+  | { ok: false; message: string }
+
+export async function listQuizImagesAction(quizId: string): Promise<ListQuizImagesResult> {
+  try {
+    return { ok: true, images: await quizApi.listMedia(quizId) }
   } catch (error) {
     return { ok: false, message: describe(error) }
   }

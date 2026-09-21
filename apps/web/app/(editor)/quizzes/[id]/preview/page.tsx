@@ -20,11 +20,16 @@ export const metadata = { title: "Preview" }
  */
 export default async function PreviewQuizPage({
   params,
+  searchParams,
 }: {
-  // Next 16: params is a Promise and must be awaited.
+  // Next 16: params and searchParams are Promises and must be awaited.
   params: Promise<{ id: string }>
+  searchParams: Promise<{ q?: string | string[] }>
 }) {
   const { id } = await params
+  // ?q=<question id> starts the preview on that question ("preview from here").
+  const { q } = await searchParams
+  const initialQuestionId = Array.isArray(q) ? (q[0] ?? null) : (q ?? null)
 
   let quiz
   try {
@@ -40,6 +45,7 @@ export default async function PreviewQuizPage({
       manifest={project(id, quiz.doc)}
       hasUnpublishedChanges={quiz.hasUnpublishedChanges}
       status={quiz.status}
+      initialQuestionId={initialQuestionId}
     />
   )
 }

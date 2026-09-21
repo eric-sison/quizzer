@@ -25,6 +25,7 @@ export type EditorState = {
 export type EditorAction =
   | { type: "selectQuestion"; id: string }
   | { type: "setTitle"; title: string }
+  | { type: "setDescription"; description: string }
   /** Appends, or inserts directly after `afterId`. Selects the new question. */
   | { type: "insertQuestion"; question: Question; afterId?: string }
   | { type: "updateQuestion"; question: Question }
@@ -51,6 +52,18 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case "setTitle": {
       if (action.title === state.doc.title) return state
       return { ...state, doc: { ...state.doc, title: action.title } }
+    }
+
+    case "setDescription": {
+      if (action.description === (state.doc.description ?? "")) return state
+      // An empty description drops the key entirely, so an untouched quiz doc
+      // stays byte-identical to what createQuizDoc produces.
+      if (action.description === "") {
+        const doc = { ...state.doc }
+        delete doc.description
+        return { ...state, doc }
+      }
+      return { ...state, doc: { ...state.doc, description: action.description } }
     }
 
     case "insertQuestion": {

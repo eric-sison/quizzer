@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { QuestionView } from "@workspace/quiz-ui"
+import { QuestionView, seededShuffle } from "@workspace/quiz-ui"
 import {
   type AnswerValue,
   type ExamManifest,
@@ -38,17 +38,35 @@ export function PreviewShell({
   manifest,
   hasUnpublishedChanges,
   status,
+  initialQuestionId = null,
 }: {
   quizId: string
   manifest: ExamManifest
   hasUnpublishedChanges: boolean
   status: QuizStatus
+  /** Start on this question - the editor's "preview from here" deep link. */
+  initialQuestionId?: string | null
 }) {
-  const [at, setAt] = React.useState(0)
+  // One random seed per preview load, like one seed per exam sitting: the
+  // shuffled order is stable while previewing and fresh on the next visit.
+  const [seed] = React.useState(() => Math.random().toString(36).slice(2))
+  const questions = React.useMemo(
+    () =>
+      manifest.shuffle_questions
+        ? seededShuffle(manifest.questions, seed)
+        : manifest.questions,
+    [manifest, seed]
+  )
+
+  const [at, setAt] = React.useState(() => {
+    // By id, not index: the display order above may be shuffled.
+    const index = questions.findIndex((q) => q.id === initialQuestionId)
+    return index >= 0 ? index : 0
+  })
   const [answers, setAnswers] = React.useState<Record<string, AnswerValue>>({})
 
-  const total = manifest.questions.length
-  const question = manifest.questions[at]
+  const total = questions.length
+  const question = questions[at]
   const last = at === total - 1
 
   return (
@@ -104,6 +122,7 @@ export function PreviewShell({
               // Same-origin proxy to apps/api; the desktop resolves the same
               // ids to data URIs its Rust process fetched.
               resolveImageSrc={(imageId) => `/api/media/${imageId}`}
+              shuffleSeed={seed}
             />
           ) : (
             <Empty>

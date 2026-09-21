@@ -2,6 +2,7 @@ import "server-only"
 
 import {
   apiErrorSchema,
+  listQuizMediaResponseSchema,
   publishResponseSchema,
   quizDetailSchema,
   quizSummarySchema,
@@ -12,6 +13,7 @@ import {
   type PublishResponse,
   type QuizDetail,
   type QuizDoc,
+  type QuizMediaItem,
   type QuizSummary,
   type SaveDraftResponse,
   type UploadMediaResponse,
@@ -129,6 +131,21 @@ export const quizApi = {
       method: "POST",
       body: { ...(title === undefined ? {} : { title }) },
       schema: quizDetailSchema,
+    })
+  },
+
+  /** Server-side copy: ids re-minted, media duplicated with it. */
+  duplicate(id: string): Promise<QuizDetail> {
+    return request(`/api/quizzes/${id}/duplicate`, {
+      method: "POST",
+      schema: quizDetailSchema,
+    })
+  },
+
+  /** The quiz's media library, for the reuse picker. */
+  listMedia(quizId: string): Promise<QuizMediaItem[]> {
+    return request(`/api/quizzes/${quizId}/media`, {
+      schema: listQuizMediaResponseSchema,
     })
   },
 

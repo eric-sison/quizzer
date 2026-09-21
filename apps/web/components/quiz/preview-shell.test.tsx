@@ -176,3 +176,63 @@ describe("what the preview must not show", () => {
     expect(container.querySelector('[role="timer"]')).toBeNull()
   })
 })
+
+describe("previewing from a specific question", () => {
+  async function showAt(manifest: ExamManifest, initialQuestionId: string | null) {
+    await act(async () => {
+      root.render(
+        <PreviewShell
+          quizId="quiz-1"
+          manifest={manifest}
+          hasUnpublishedChanges={false}
+          status="draft"
+          initialQuestionId={initialQuestionId}
+        />
+      )
+    })
+  }
+
+  it("starts on the deep-linked question", async () => {
+    const manifest = manifestOf()
+    await showAt(manifest, manifest.questions[1]!.id)
+
+    expect(container.textContent).toContain("Pick the prime.")
+    expect(container.textContent).toContain("2 of 3")
+  })
+
+  it("falls back to the first question for an unknown id", async () => {
+    await showAt(manifestOf(), "no-such-question")
+    expect(container.textContent).toContain("1 of 3")
+  })
+
+  it("lands on the right question even when question order is shuffled", async () => {
+    const manifest = manifestOf({ shuffleQuestions: true })
+    await showAt(manifest, manifest.questions[2]!.id)
+
+    // Whatever position the shuffle gave it, the content is the essay.
+    expect(container.textContent).toContain("Explain why.")
+  })
+})
+
+describe("shuffled question order", () => {
+  it("shows every question exactly once, in an order stable across renders", async () => {
+    const manifest = manifestOf({ shuffleQuestions: true })
+    await show(manifest)
+
+    const seen: string[] = []
+    for (let i = 0; i < manifest.questions.length; i++) {
+      const heading = container.textContent ?? ""
+      for (const q of manifest.questions) {
+        if (heading.includes(q.prompt)) seen.push(q.id)
+      }
+      const next = button("Next")
+      if (next && i < manifest.questions.length - 1) {
+        await act(async () => next.click())
+      }
+    }
+
+    // Each question appeared exactly once across the walk.
+    expect([...new Set(seen)].sort()).toEqual(manifest.questions.map((q) => q.id).sort())
+    expect(seen).toHaveLength(manifest.questions.length)
+  })
+})

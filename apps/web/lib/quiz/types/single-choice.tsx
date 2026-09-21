@@ -6,6 +6,7 @@ import { RadioGroup } from "@workspace/ui/components/radio-group"
 
 import { OptionListEditor } from "@/components/quiz/option-list-editor"
 import { SelectionSwitch } from "@/components/quiz/selection-switch"
+import { ShuffleOptionsSwitch } from "@/components/quiz/shuffle-options-switch"
 import type { QuestionEditorProps, QuestionTypeDef } from "./registry"
 
 function SingleChoiceEditor({
@@ -32,6 +33,7 @@ function SingleChoiceEditor({
         selection="one"
         onChange={(options) => onChange({ ...question, options })}
         action={<SelectionSwitch question={question} onChange={onChange} />}
+        footerExtra={<ShuffleOptionsSwitch question={question} onChange={onChange} />}
       />
     </RadioGroup>
   )

@@ -81,6 +81,30 @@ describe("a change that changes nothing keeps the same doc object", () => {
     })
     expect(same).toBe(state)
   })
+
+  it("re-emitting the description it already has, including the empty one", () => {
+    const state = stateOf(createQuizDoc("Midterm"))
+    expect(
+      editorReducer(state, { type: "setDescription", description: "" })
+    ).toBe(state)
+  })
+})
+
+describe("setDescription", () => {
+  it("sets and clears the field, dropping the key when empty", () => {
+    const state = stateOf(createQuizDoc("Midterm"))
+
+    const set = editorReducer(state, {
+      type: "setDescription",
+      description: "Bring a calculator.",
+    })
+    expect(set.doc.description).toBe("Bring a calculator.")
+
+    const cleared = editorReducer(set, { type: "setDescription", description: "" })
+    // The key is gone, not empty: an untouched doc stays byte-identical to
+    // what createQuizDoc produces.
+    expect("description" in cleared.doc).toBe(false)
+  })
 })
 
 describe("updateSettings", () => {

@@ -1,15 +1,13 @@
 "use client"
 
-import * as React from "react"
-import { createQuestion, emptyRichDoc, type RichDoc } from "@workspace/quiz-core"
-import { ChevronRight, TextAlignStart } from "lucide-react"
+import { createQuestion, type RichDoc } from "@workspace/quiz-core"
+import { TextAlignStart } from "lucide-react"
 import { Badge } from "@workspace/ui/components/badge"
-import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
-import { RichTextEditor } from "@workspace/quiz-ui"
 
 import { SectionHeader } from "@/components/quiz/section-header"
+import { TeacherOnlyDocEditor } from "@/components/quiz/teacher-only-doc-editor"
 import type { QuestionEditorProps, QuestionTypeDef } from "./registry"
 
 function toBound(raw: string): number | undefined {
@@ -18,8 +16,6 @@ function toBound(raw: string): number | undefined {
 }
 
 function EssayEditor({ question, onChange }: QuestionEditorProps<"essay">) {
-  const [showRubric, setShowRubric] = React.useState(question.rubricDoc !== undefined)
-
   function setRubric(doc: RichDoc | undefined) {
     const next = { ...question }
     if (doc === undefined) delete next.rubricDoc
@@ -85,41 +81,13 @@ function EssayEditor({ question, onChange }: QuestionEditorProps<"essay">) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const next = !showRubric
-            setShowRubric(next)
-            if (next && question.rubricDoc === undefined) setRubric(emptyRichDoc())
-            if (!next) setRubric(undefined)
-          }}
-        >
-          <ChevronRight
-            className={showRubric ? "rotate-90 transition-transform" : "transition-transform"}
-          />
-          Marking rubric (teacher only)
-        </Button>
-        </div>
-
-        {showRubric ? (
-          <>
-            <RichTextEditor
-              value={question.rubricDoc ?? emptyRichDoc()}
-              onChange={setRubric}
-              placeholder="What earns marks…"
-            />
-            {/* Worth stating plainly: this is the one authored field that is
-                deliberately withheld from the published manifest. */}
-            <p className="text-xs text-muted-foreground">
-              Never sent to students. The rubric is stripped when the quiz is
-              published.
-            </p>
-          </>
-        ) : null}
-      </div>
+      <TeacherOnlyDocEditor
+        label="Marking rubric (teacher only)"
+        value={question.rubricDoc}
+        placeholder="What earns marks…"
+        caption="Never sent to students. The rubric is stripped when the quiz is published."
+        onChange={setRubric}
+      />
     </div>
   )
 }

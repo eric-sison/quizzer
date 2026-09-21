@@ -4,7 +4,12 @@
  */
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { createOption, createQuestion, type Question } from "@workspace/quiz-core"
+import {
+  createOption,
+  createQuestion,
+  richDocFromText,
+  type Question,
+} from "@workspace/quiz-core"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 // The image field reaches for a Server Action, whose module imports
@@ -58,7 +63,16 @@ function labels() {
 }
 
 describe("shared shell", () => {
-  it.each(["true_false", "single_choice", "multiple_choice", "essay"] as const)(
+  it.each([
+    "true_false",
+    "single_choice",
+    "multiple_choice",
+    "numeric",
+    "fill_in_blank",
+    "matching",
+    "ordering",
+    "essay",
+  ] as const)(
     "gives %s a prompt editor, points and required",
     async (kind) => {
       await mount(createQuestion(kind))
@@ -98,6 +112,102 @@ describe("per-kind answer configuration", () => {
     expect(text()).toContain("Add option")
     expect(text()).toContain("One answer")
     expect(text()).toContain("Exactly one must be correct")
+  })
+
+  it("options can carry an image, which survives retyping the caption", async () => {
+    const withImage = {
+      ...createOption("The left diagram"),
+      labelDoc: {
+        type: "doc" as const,
+        content: [
+          {
+            type: "paragraph" as const,
+            content: [{ type: "text" as const, text: "The left diagram" }],
+          },
+          {
+            type: "image" as const,
+            attrs: { mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b", alt: "Mitosis" },
+          },
+        ],
+      },
+    }
+    const question = {
+      ...createQuestion("multiple_choice"),
+      options: [withImage, createOption("The right diagram")],
+    }
+    const seen: Question[] = []
+    await mount(question, (q) => seen.push(q))
+
+    // Both rows offer an upload; the one with an image shows it with its alt.
+    expect(labels()).toContain("Replace the image on The left diagram")
+    expect(labels()).toContain("Add an image to The right diagram")
+    const img = container.querySelector("img")
+    expect(img?.getAttribute("src")).toBe(
+      "/api/media/0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b"
+    )
+    expect(img?.getAttribute("alt")).toBe("Mitosis")
+
+    // Retyping the caption must not drop the picture.
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Option 1 text"]'
+    )!
+    const setValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!
+    await act(async () => {
+      setValue.call(input, "The corrected diagram")
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+
+    const latest = seen.at(-1)
+    if (!latest || !("options" in latest)) throw new Error("expected options")
+    const doc = latest.options[0]!.labelDoc
+    expect(JSON.stringify(doc)).toContain("The corrected diagram")
+    const imageBlock = doc.content.find((block) => block.type === "image")
+    expect(imageBlock).toBeDefined()
+    // Alt text is positional, not authored: any edit re-syncs it to the
+    // option's place in the list, so a screen reader never hears a stale one.
+    expect(imageBlock).toMatchObject({ attrs: { alt: "Option 1" } })
+  })
+
+  it("removing an option's image keeps its caption", async () => {
+    const question = {
+      ...createQuestion("single_choice"),
+      options: [
+        {
+          ...createOption("Seven"),
+          labelDoc: {
+            type: "doc" as const,
+            content: [
+              {
+                type: "paragraph" as const,
+                content: [{ type: "text" as const, text: "Seven" }],
+              },
+              {
+                type: "image" as const,
+                attrs: { mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b", alt: "" },
+              },
+            ],
+          },
+        },
+        createOption("Nine"),
+      ],
+    }
+    const seen: Question[] = []
+    await mount(question, (q) => seen.push(q))
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[aria-label="Remove the image from Seven"]')!
+        .click()
+    })
+
+    const latest = seen.at(-1)
+    if (!latest || !("options" in latest)) throw new Error("expected options")
+    const doc = latest.options[0]!.labelDoc
+    expect(doc.content.some((block) => block.type === "image")).toBe(false)
+    expect(JSON.stringify(doc)).toContain("Seven")
   })
 
   it("multiple choice counts how many are marked correct", async () => {
@@ -251,5 +361,269 @@ describe("type menu", () => {
     // which is which, otherwise it shows "Multiple Choice" twice.
     expect(rendered).toContain("Multiple Choice (one answer)")
     expect(rendered).toContain("Multiple Choice (many answers)")
+  })
+})
+
+describe("the newer kinds' editors", () => {
+  it("numeric offers value, tolerance and unit", async () => {
+    await mount(createQuestion("numeric"))
+    expect(text()).toContain("Correct value")
+    expect(text()).toContain("Tolerance")
+    expect(text()).toContain("Unit")
+  })
+
+  it("fill in the blank offers blanks and the case toggle", async () => {
+    await mount(createQuestion("fill_in_blank"))
+    expect(text()).toContain("Blank 1")
+    expect(text()).toContain("Case sensitive")
+    expect(text()).toContain("Add blank")
+  })
+
+  it("matching offers pairs and extra right-side items", async () => {
+    await mount(createQuestion("matching"))
+    expect(labels()).toContain("Pair 1 left side")
+    expect(labels()).toContain("Pair 2 right side")
+    expect(text()).toContain("Add pair")
+    expect(text()).toContain("Add extra item")
+  })
+
+  it("ordering reuses the item list without any correct-marking", async () => {
+    await mount(createQuestion("ordering"))
+    // SectionHeader renders titles uppercased.
+    expect(text().toUpperCase()).toContain("ITEMS, IN THE CORRECT ORDER")
+    expect(text()).toContain("Add item")
+    // No correct-marking controls at all in "none" mode. (The shell's own
+    // Required checkbox remains, so assert on the marking affordances.)
+    expect(container.querySelector("input[type=radio]")).toBeNull()
+    expect(labels().some((l) => l?.startsWith("Mark "))).toBe(false)
+  })
+})
+
+describe("the answer explanation", () => {
+  it("is collapsed by default, edits into the question, and clears on collapse", async () => {
+    const seen: Question[] = []
+    const question = createQuestion("true_false")
+    await mount(question, (q) => seen.push(q))
+
+    expect(container.querySelector(".ProseMirror")).not.toBeNull() // the prompt
+    const toggle = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Answer explanation")
+    )!
+    await act(async () => toggle.click())
+
+    // Opening mints an empty explanation doc on the question.
+    expect(seen.at(-1)?.explanationDoc).toBeDefined()
+
+    await act(async () => toggle.click())
+    expect(seen.at(-1)?.explanationDoc).toBeUndefined()
+  })
+})
+
+describe("deleting a question", () => {
+  async function openActions() {
+    const trigger = container.querySelector<HTMLElement>(
+      '[aria-label="Actions for question 1"]'
+    )!
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))
+      trigger.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))
+      trigger.click()
+    })
+  }
+
+  function menuItem(label: string): HTMLElement {
+    const item = [...document.querySelectorAll<HTMLElement>("[role=menuitem]")].find(
+      (el) => el.textContent?.includes(label)
+    )
+    if (!item) throw new Error(`no menu item: ${label}`)
+    return item
+  }
+
+  it("asks first, and only confirming fires onDelete", async () => {
+    let deleted = 0
+    await act(async () => {
+      root.render(
+        <QuestionEditor
+          quizId="quiz-1"
+          question={createQuestion("essay")}
+          index={0}
+          total={3}
+          onChange={() => {}}
+          onDuplicate={() => {}}
+          onMove={() => {}}
+          onDelete={() => {
+            deleted += 1
+          }}
+        />
+      )
+    })
+
+    await openActions()
+    await act(async () => menuItem("Delete question").click())
+
+    // The menu item opened a dialog instead of deleting.
+    expect(deleted).toBe(0)
+    const dialog = document.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain("Delete question 1?")
+
+    const confirm = [...dialog!.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "Delete"
+    )!
+    await act(async () => confirm.click())
+    expect(deleted).toBe(1)
+  })
+
+  it("keeping it deletes nothing", async () => {
+    let deleted = 0
+    await act(async () => {
+      root.render(
+        <QuestionEditor
+          quizId="quiz-1"
+          question={createQuestion("essay")}
+          index={0}
+          total={3}
+          onChange={() => {}}
+          onDuplicate={() => {}}
+          onMove={() => {}}
+          onDelete={() => {
+            deleted += 1
+          }}
+        />
+      )
+    })
+
+    await openActions()
+    await act(async () => menuItem("Delete question").click())
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    const cancel = [...dialog.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "Keep it"
+    )!
+    await act(async () => cancel.click())
+
+    expect(deleted).toBe(0)
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+})
+
+describe("pasting a list of options", () => {
+  function paste(input: HTMLInputElement, textContent: string) {
+    // jsdom has no DataTransfer; a plain event with a stubbed clipboardData is
+    // what React's synthetic onPaste reads.
+    const event = new Event("paste", { bubbles: true, cancelable: true })
+    Object.defineProperty(event, "clipboardData", {
+      value: { getData: () => textContent },
+    })
+    input.dispatchEvent(event)
+  }
+
+  it("turns a multi-line paste into one option per line", async () => {
+    const seen: Question[] = []
+    const question = createQuestion("multiple_choice")
+    await mount(question, (q) => seen.push(q))
+
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Option 1 text"]'
+    )!
+    await act(async () => paste(input, "Seven\nNine\nThirteen\n"))
+
+    const latest = seen.at(-1)
+    if (!latest || !("options" in latest)) throw new Error("expected options")
+    // Blank option 1 took the first line; the rest were inserted after it.
+    const labelsOf = latest.options.map((o) => JSON.stringify(o.labelDoc))
+    expect(labelsOf[0]).toContain("Seven")
+    expect(labelsOf[1]).toContain("Nine")
+    expect(labelsOf[2]).toContain("Thirteen")
+    expect(latest.options).toHaveLength(4) // the untouched second default stays
+    expect(latest.options.every((o) => !o.correct)).toBe(true)
+  })
+
+  it("keeps typed text and appends the pasted lines after it", async () => {
+    const seen: Question[] = []
+    const base = createQuestion("multiple_choice")
+    if (!("options" in base)) throw new Error("expected options")
+    const question = {
+      ...base,
+      options: [
+        { ...base.options[0]!, labelDoc: richDocFromText("Keep me") },
+        base.options[1]!,
+      ],
+    }
+    await mount(question, (q) => seen.push(q))
+
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Option 1 text"]'
+    )!
+    await act(async () => paste(input, "A\nB"))
+
+    const latest = seen.at(-1)
+    if (!latest || !("options" in latest)) throw new Error("expected options")
+    expect(JSON.stringify(latest.options[0]!.labelDoc)).toContain("Keep me")
+    expect(JSON.stringify(latest.options[1]!.labelDoc)).toContain('"A"')
+    expect(JSON.stringify(latest.options[2]!.labelDoc)).toContain('"B"')
+  })
+
+  it("leaves a single-line paste to the browser", async () => {
+    const seen: Question[] = []
+    await mount(createQuestion("multiple_choice"), (q) => seen.push(q))
+
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Option 1 text"]'
+    )!
+    await act(async () => paste(input, "just one line"))
+
+    // Not intercepted: no onChange fired from the paste handler itself.
+    expect(seen).toHaveLength(0)
+  })
+})
+
+describe("type switches and the newer kinds", () => {
+  function openMenuFor(labelText: string) {
+    const trigger = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes(labelText)
+    )!
+    return act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))
+      trigger.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))
+      trigger.click()
+    })
+  }
+
+  function radioItem(label: string): HTMLElement {
+    const item = [...document.querySelectorAll('[role="menuitemradio"]')].find((el) =>
+      el.textContent?.includes(label)
+    ) as HTMLElement | undefined
+    if (!item) throw new Error(`no menu item: ${label}`)
+    return item
+  }
+
+  it("warns before discarding a numeric correct value", async () => {
+    const question = {
+      ...createQuestion("numeric"),
+      correctValue: 100,
+    }
+    await mount(question)
+
+    await openMenuFor("Numeric")
+    await act(async () => radioItem("Essay").click())
+
+    expect(document.body.textContent ?? "").toContain(
+      "would discard the correct value and tolerance"
+    )
+  })
+
+  it("carries the explanation across a kind switch", async () => {
+    const changes: Question[] = []
+    const question = {
+      ...createQuestion("true_false"),
+      explanationDoc: richDocFromText("Because water boils at 100C at sea level."),
+    }
+    await mount(question, (q) => changes.push(q))
+
+    await openMenuFor("True / False")
+    await act(async () => radioItem("Essay").click())
+
+    const switched = changes.at(-1)
+    expect(switched?.kind).toBe("essay")
+    expect(JSON.stringify(switched?.explanationDoc)).toContain("sea level")
   })
 })

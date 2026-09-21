@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import type { Question, QuestionKind } from "@workspace/quiz-core"
+import { isRichDocEmpty, type Question, type QuestionKind } from "@workspace/quiz-core"
 import { ChevronDown } from "lucide-react"
 import {
   AlertDialog,
@@ -52,6 +52,28 @@ function lossFor(question: Question, next: QuestionKind): string | null {
   if (question.kind === "essay" && question.rubricDoc !== undefined) {
     return "would discard the marking rubric."
   }
+  if (question.kind === "numeric" && question.correctValue !== undefined) {
+    return "would discard the correct value and tolerance."
+  }
+  if (
+    question.kind === "fill_in_blank" &&
+    question.blanks.some((blank) => blank.acceptedAnswers.some((a) => a.trim()))
+  ) {
+    return "would discard the blanks and their accepted responses."
+  }
+  if (question.kind === "matching") {
+    const filled =
+      question.pairs.filter((p) => p.leftText.trim() || p.rightText.trim()).length +
+      question.distractors.filter((d) => d.text.trim()).length
+    if (filled > 0) {
+      return `would discard all ${question.pairs.length} pairs.`
+    }
+  }
+  if (question.kind === "ordering") {
+    if (question.items.some((item) => !isRichDocEmpty(item.labelDoc))) {
+      return `would discard all ${question.items.length} items.`
+    }
+  }
   return null
 }
 
@@ -67,7 +89,7 @@ export function QuestionTypeSelect({
   const current = typeDef(question.kind)
   const Icon = current.icon
 
-  /** Keep the prompt and scoring; replace only the answer configuration. */
+  /** Keep the prompt, scoring and explanation; replace the answer config. */
   function convert(kind: QuestionKind): Question {
     const fresh = typeDef(kind).createDefault()
     return {
@@ -76,6 +98,11 @@ export function QuestionTypeSelect({
       promptDoc: question.promptDoc,
       points: question.points,
       required: question.required,
+      // Conditional so a question without one doesn't gain an explicit
+      // `explanationDoc: undefined` key, which the strict schema rejects.
+      ...(question.explanationDoc !== undefined
+        ? { explanationDoc: question.explanationDoc }
+        : {}),
     }
   }
 

@@ -19,8 +19,9 @@ import { ListChecks } from "lucide-react"
 import { QuestionEditor } from "@/components/quiz/question-editor"
 import { QuestionRail } from "@/components/quiz/question-rail"
 import { QuizEditorHeader } from "@/components/quiz/quiz-editor-header"
+import { isTypingTarget } from "@/lib/is-typing-target"
 import { cloneQuestion } from "@/lib/quiz/clone"
-import { editorReducer, initialEditorState } from "@/lib/quiz/reducer"
+import { historyReducer, initialHistoryState } from "@/lib/quiz/history"
 import { typeDef } from "@/lib/quiz/types/registry"
 import { useAutosave, type SaveResult } from "@/lib/quiz/use-autosave"
 import { saveDraftAction } from "@/lib/quiz-actions"
@@ -33,11 +34,30 @@ import { saveDraftAction } from "@/lib/quiz-actions"
  * live here, which is why adding a question type touches none of them.
  */
 export function QuizEditor({ quiz }: { quiz: QuizDetail }) {
-  const [state, dispatch] = React.useReducer(
-    editorReducer,
+  const [history, dispatch] = React.useReducer(
+    historyReducer,
     quiz.doc,
-    initialEditorState
+    initialHistoryState
   )
+  const state = history.present
+
+  // Global undo/redo, standing down wherever something owns its own keystrokes
+  // (inputs have native undo; Tiptap ships its own history for prompt text).
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || isTypingTarget(event.target)) return
+      const key = event.key.toLowerCase()
+      if (key === "z") {
+        event.preventDefault()
+        dispatch({ type: event.shiftKey ? "redo" : "undo" })
+      } else if (key === "y" && event.ctrlKey && !event.metaKey) {
+        event.preventDefault()
+        dispatch({ type: "redo" })
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   const save = React.useCallback(
     (doc: QuizDoc, docVersion: number): Promise<SaveResult> =>
@@ -92,11 +112,17 @@ export function QuizEditor({ quiz }: { quiz: QuizDetail }) {
         hasUnpublishedChanges={hasUnpublishedChanges}
         saveStatus={status}
         onTitleChange={(title) => dispatch({ type: "setTitle", title })}
+        onDescriptionChange={(description) => dispatch({ type: "setDescription", description })}
         onSettingsChange={(settings) => dispatch({ type: "updateSettings", settings })}
         onRetry={retryNow}
         onReload={() => window.location.reload()}
         onSelectQuestion={(id) => dispatch({ type: "selectQuestion", id })}
         onPublished={setPublishedDoc}
+        selectedId={state.selectedId}
+        canUndo={history.past.length > 0}
+        canRedo={history.future.length > 0}
+        onUndo={() => dispatch({ type: "undo" })}
+        onRedo={() => dispatch({ type: "redo" })}
       />
 
       <div className="flex min-h-0 flex-1">

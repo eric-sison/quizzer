@@ -11,10 +11,23 @@
  */
 import type { Question, QuestionKind, QuestionOfKind } from "@workspace/quiz-core"
 import type { LucideIcon } from "lucide-react"
-import { CircleDot, SquareCheckBig, TextAlignStart, ToggleLeft } from "lucide-react"
+import {
+  ArrowLeftRight,
+  CircleDot,
+  Hash,
+  ListOrdered,
+  SquareCheckBig,
+  TextAlignStart,
+  TextCursorInput,
+  ToggleLeft,
+} from "lucide-react"
 
 import { essayType } from "./essay"
+import { fillInBlankType } from "./fill-in-blank"
+import { matchingType } from "./matching"
 import { multipleChoiceType } from "./multiple-choice"
+import { numericType } from "./numeric"
+import { orderingType } from "./ordering"
 import { singleChoiceType } from "./single-choice"
 import { trueFalseType } from "./true-false"
 
@@ -63,6 +76,10 @@ export const questionTypes: QuestionTypeRegistry = {
   true_false: trueFalseType,
   single_choice: singleChoiceType,
   multiple_choice: multipleChoiceType,
+  numeric: numericType,
+  fill_in_blank: fillInBlankType,
+  matching: matchingType,
+  ordering: orderingType,
   essay: essayType,
 }
 
@@ -70,14 +87,26 @@ export const ICONS: Record<QuestionKind, LucideIcon> = {
   true_false: ToggleLeft,
   single_choice: CircleDot,
   multiple_choice: SquareCheckBig,
+  numeric: Hash,
+  fill_in_blank: TextCursorInput,
+  matching: ArrowLeftRight,
+  ordering: ListOrdered,
   essay: TextAlignStart,
 }
 
-/** Menu order. Explicit so it does not depend on object key order. */
+/**
+ * Menu order. Explicit so it does not depend on object key order - and the
+ * registry test asserts it covers every kind, because forgetting an entry here
+ * makes a kind silently unreachable in the menu.
+ */
 export const TYPE_MENU_ORDER: QuestionKind[] = [
   "true_false",
   "single_choice",
   "multiple_choice",
+  "numeric",
+  "fill_in_blank",
+  "matching",
+  "ordering",
   "essay",
 ]
 

@@ -15,6 +15,7 @@ import {
   SheetTrigger,
 } from "@workspace/ui/components/sheet"
 import { Switch } from "@workspace/ui/components/switch"
+import { Textarea } from "@workspace/ui/components/textarea"
 
 /** Bounds mirror quizSettingsSchema's durationS range of 1s-24h. */
 const MAX_DURATION_MIN = 1_440
@@ -26,10 +27,14 @@ const MAX_DURATION_MIN = 1_440
  */
 export function QuizSettingsSheet({
   settings,
+  description,
   onChange,
+  onDescriptionChange,
 }: {
   settings: QuizSettings
+  description: string
   onChange: (next: QuizSettings) => void
+  onDescriptionChange: (description: string) => void
 }) {
   return (
     <Sheet>
@@ -51,6 +56,21 @@ export function QuizSettingsSheet({
         </SheetHeader>
 
         <div className="flex flex-col gap-6 px-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="quiz-description">Description</Label>
+            <Textarea
+              id="quiz-description"
+              value={description}
+              maxLength={2000}
+              rows={3}
+              placeholder="What this exam covers, what to bring…"
+              onChange={(event) => onDescriptionChange(event.currentTarget.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Shown to students on the exam link page. Don&apos;t put answers here.
+            </p>
+          </div>
+
           <DurationField
             durationS={settings.durationS}
             onCommit={(durationS) => onChange({ ...settings, durationS })}

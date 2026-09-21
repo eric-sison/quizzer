@@ -1,12 +1,13 @@
 "use client"
 
+import * as React from "react"
 import {
   toPlainText,
   type Issue,
   type Question,
   type QuestionKind,
 } from "@workspace/quiz-core"
-import { GripVertical, Plus } from "lucide-react"
+import { GripVertical, Plus, Search } from "lucide-react"
 import { Button } from "@workspace/ui/components/button"
 import {
   DropdownMenu,
@@ -16,6 +17,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@workspace/ui/components/input-group"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { SortableList, useSortableRow } from "@/components/quiz/sortable"
@@ -40,12 +46,26 @@ export function QuestionRail({
     issues.filter((i) => i.severity === "error" && i.questionId).map((i) => i.questionId)
   )
 
+  const [query, setQuery] = React.useState("")
+  const needle = query.trim().toLowerCase()
+  const filtering = needle.length > 0
+
+  // Pair each question with its ORIGINAL index: a filtered list must keep
+  // showing the numbers a teacher knows the questions by.
+  const visible = questions
+    .map((question, index) => ({ question, index }))
+    .filter(
+      (entry) =>
+        !filtering ||
+        toPlainText(entry.question.promptDoc).toLowerCase().includes(needle)
+    )
+
   // Past ~100 questions, stop laying out and painting offscreen rows. Browser
   // virtualization via content-visibility rather than a windowing library:
   // rows keep their real DOM nodes, so dnd-kit's sortable measurements and the
   // keyboard sensor keep working, and the fixed row height (h-9 + mb-0.5 =
   // 38px) makes the intrinsic-size hint exact rather than an estimate.
-  const virtualize = questions.length > 100
+  const virtualize = visible.length > 100
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r bg-sidebar">
@@ -54,7 +74,7 @@ export function QuestionRail({
           QUESTIONS
         </span>
         <span className="rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
-          {questions.length}
+          {filtering ? `${visible.length}/${questions.length}` : questions.length}
         </span>
         <div className="flex-1" />
         {errorIds.size > 0 ? (
@@ -65,10 +85,33 @@ export function QuestionRail({
         ) : null}
       </div>
 
+      <div className="shrink-0 px-2.5 pb-1.5">
+        <InputGroup>
+          <InputGroupAddon>
+            <Search />
+          </InputGroupAddon>
+          <InputGroupInput
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setQuery("")
+            }}
+            placeholder="Search questions…"
+            aria-label="Search questions"
+          />
+        </InputGroup>
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5">
-        <SortableList ids={questions.map((q) => q.id)} onReorder={onReorder}>
+        <SortableList
+          ids={visible.map((entry) => entry.question.id)}
+          // Reordering a filtered view would splice against the wrong indices,
+          // so dragging stands down until the search is cleared.
+          onReorder={filtering ? () => {} : onReorder}
+        >
           <ul>
-            {questions.map((question, index) => (
+            {visible.map(({ question, index }) => (
               <QuestionRailItem
                 key={question.id}
                 question={question}
@@ -76,9 +119,15 @@ export function QuestionRail({
                 selected={question.id === selectedId}
                 hasError={errorIds.has(question.id)}
                 virtualize={virtualize}
+                sortable={!filtering}
                 onSelect={() => onSelect(question.id)}
               />
             ))}
+            {filtering && visible.length === 0 ? (
+              <li className="px-2 py-3 text-xs text-muted-foreground">
+                No questions match
+              </li>
+            ) : null}
           </ul>
         </SortableList>
       </div>
@@ -98,6 +147,7 @@ function QuestionRailItem({
   selected,
   hasError,
   virtualize,
+  sortable,
   onSelect,
 }: {
   question: Question
@@ -105,6 +155,8 @@ function QuestionRailItem({
   selected: boolean
   hasError: boolean
   virtualize: boolean
+  /** False while the list is filtered - reordering a subset would misplace rows. */
+  sortable: boolean
   onSelect: () => void
 }) {
   const { isDragging, rowProps, handleProps } = useSortableRow(question.id)
@@ -124,15 +176,22 @@ function QuestionRailItem({
       )}
     >
       {/* A real button, not a decorative icon: this is how the list is
-          reordered from the keyboard. */}
-      <button
-        {...handleProps}
-        type="button"
-        aria-label={`Reorder question ${index + 1}`}
-        className="flex h-full cursor-grab items-center pl-1.5 text-muted-foreground/40 outline-none hover:text-muted-foreground focus-visible:text-foreground"
-      >
-        <GripVertical className="size-3.5" />
-      </button>
+          reordered from the keyboard. While filtering it becomes an inert
+          spacer of the same width, so rows don't shift sideways. */}
+      {sortable ? (
+        <button
+          {...handleProps}
+          type="button"
+          aria-label={`Reorder question ${index + 1}`}
+          className="flex h-full cursor-grab items-center pl-1.5 text-muted-foreground/40 outline-none hover:text-muted-foreground focus-visible:text-foreground"
+        >
+          <GripVertical className="size-3.5" />
+        </button>
+      ) : (
+        <span aria-hidden className="flex h-full items-center pl-1.5 text-transparent">
+          <GripVertical className="size-3.5" />
+        </span>
+      )}
 
       <button
         type="button"
