@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import {
-  createQuestion,
   validateQuiz,
   type QuestionKind,
   type QuizDetail,
@@ -22,6 +21,7 @@ import { QuestionRail } from "@/components/quiz/question-rail"
 import { QuizEditorHeader } from "@/components/quiz/quiz-editor-header"
 import { cloneQuestion } from "@/lib/quiz/clone"
 import { editorReducer, initialEditorState } from "@/lib/quiz/reducer"
+import { typeDef } from "@/lib/quiz/types/registry"
 import { useAutosave, type SaveResult } from "@/lib/quiz/use-autosave"
 import { saveDraftAction } from "@/lib/quiz-actions"
 
@@ -58,8 +58,19 @@ export function QuizEditor({ quiz }: { quiz: QuizDetail }) {
   const index = state.doc.questions.findIndex((q) => q.id === state.selectedId)
   const selected = index >= 0 ? state.doc.questions[index] : undefined
 
+  // The server's hasUnpublishedChanges is a snapshot from page load; the
+  // reducer knows about every keystroke since. Comparing by identity works
+  // because the reducer returns the same doc object for a no-op change, and
+  // publishing moves the baseline to whatever document was submitted. Gated on
+  // status like the server's own derivation: a draft's edits are not
+  // "unpublished changes", they are just the draft.
+  const [publishedDoc, setPublishedDoc] = React.useState(quiz.doc)
+  const hasUnpublishedChanges =
+    quiz.status === "published" &&
+    (quiz.hasUnpublishedChanges || state.doc !== publishedDoc)
+
   function addQuestion(kind: QuestionKind) {
-    dispatch({ type: "insertQuestion", question: createQuestion(kind) })
+    dispatch({ type: "insertQuestion", question: typeDef(kind).createDefault() })
   }
 
   function duplicateQuestion() {
@@ -78,12 +89,14 @@ export function QuizEditor({ quiz }: { quiz: QuizDetail }) {
         doc={state.doc}
         status={quiz.status}
         url={quiz.url}
-        hasUnpublishedChanges={quiz.hasUnpublishedChanges}
+        hasUnpublishedChanges={hasUnpublishedChanges}
         saveStatus={status}
         onTitleChange={(title) => dispatch({ type: "setTitle", title })}
+        onSettingsChange={(settings) => dispatch({ type: "updateSettings", settings })}
         onRetry={retryNow}
         onReload={() => window.location.reload()}
         onSelectQuestion={(id) => dispatch({ type: "selectQuestion", id })}
+        onPublished={setPublishedDoc}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -100,6 +113,7 @@ export function QuizEditor({ quiz }: { quiz: QuizDetail }) {
           {selected ? (
             <QuestionEditor
               key={selected.id}
+              quizId={quiz.id}
               question={selected}
               index={index}
               total={state.doc.questions.length}

@@ -37,7 +37,8 @@ export type SaveStatus =
   | { kind: "conflict"; message: string }
 
 export const AUTOSAVE_DELAY_MS = 800
-const MAX_AUTO_ATTEMPTS = 4
+// Five attempts total: the initial save plus retries at 1s, 2s, 4s and 8s.
+const MAX_AUTO_ATTEMPTS = 5
 const BACKOFF_BASE_MS = 1_000
 const BACKOFF_CEILING_MS = 20_000
 

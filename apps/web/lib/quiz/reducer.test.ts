@@ -72,6 +72,34 @@ describe("a change that changes nothing keeps the same doc object", () => {
     const state = stateOf(docWith("essay"))
     expect(editorReducer(state, { type: "selectQuestion", id: "gone" })).toBe(state)
   })
+
+  it("re-emitting the settings it already has", () => {
+    const state = stateOf(createQuizDoc("Midterm"))
+    const same = editorReducer(state, {
+      type: "updateSettings",
+      settings: { ...state.doc.settings },
+    })
+    expect(same).toBe(state)
+  })
+})
+
+describe("updateSettings", () => {
+  it("replaces the settings and keeps everything else", () => {
+    const doc = docWith("essay")
+    const state = stateOf(doc)
+    const next = editorReducer(state, {
+      type: "updateSettings",
+      settings: { ...doc.settings, durationS: 1_800, shuffleQuestions: true },
+    })
+
+    expect(next.doc.settings).toEqual({
+      ...doc.settings,
+      durationS: 1_800,
+      shuffleQuestions: true,
+    })
+    expect(next.doc.questions).toBe(doc.questions)
+    expect(next.selectedId).toBe(state.selectedId)
+  })
 })
 
 describe("insertQuestion", () => {

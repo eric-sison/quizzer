@@ -63,7 +63,15 @@ function unpublishable(): QuizDoc {
 
 const selected: string[] = []
 
-async function open(doc: QuizDoc, overrides: Partial<{ status: "draft" | "published"; url: string | null; hasUnpublishedChanges: boolean }> = {}) {
+async function open(
+  doc: QuizDoc,
+  overrides: Partial<{
+    status: "draft" | "published"
+    url: string | null
+    hasUnpublishedChanges: boolean
+    onPublished: (doc: QuizDoc) => void
+  }> = {}
+) {
   selected.length = 0
   await act(async () => {
     root.render(
@@ -74,6 +82,7 @@ async function open(doc: QuizDoc, overrides: Partial<{ status: "draft" | "publis
         url={overrides.url ?? null}
         hasUnpublishedChanges={overrides.hasUnpublishedChanges ?? false}
         onSelectQuestion={(id) => selected.push(id)}
+        onPublished={overrides.onPublished}
       />
     )
   })
@@ -114,12 +123,14 @@ const published: PublishResponse = {
 }
 
 describe("before publishing", () => {
-  it("lists what is wrong without waiting for the server", async () => {
+  it("says the quiz is not ready without waiting for the server, and without itemizing", async () => {
     await open(unpublishable())
 
-    expect(text()).toContain("to fix first")
-    expect(text()).toContain("Give the quiz a title.")
-    expect(text()).toContain("Add at least one question.")
+    expect(text()).toContain("isn't ready to publish")
+    expect(text()).toContain("2 issues need fixing")
+    // Deliberately no per-issue list: a quiz can carry dozens of problems and
+    // the rail dots already say where each one lives.
+    expect(text()).not.toContain("Give the quiz a title.")
     expect(publishQuizAction).not.toHaveBeenCalled()
   })
 
@@ -133,13 +144,15 @@ describe("before publishing", () => {
   it("says nothing alarming about a quiz that is ready", async () => {
     await open(publishable())
 
-    expect(text()).not.toContain("to fix first")
+    expect(text()).not.toContain("isn't ready to publish")
     expect(dialogButton("Publish")).toBeDefined()
   })
 })
 
 describe("when the server refuses", () => {
-  it("shows the server's list, not the local one", async () => {
+  it("trusts the server's verdict, not the local one", async () => {
+    // The local doc passes validation, so any refusal shown must be the
+    // server's finding.
     publishQuizAction.mockResolvedValue({
       ok: false,
       reason: "invalid",
@@ -157,10 +170,11 @@ describe("when the server refuses", () => {
     await open(publishable())
     await act(async () => dialogButton("Publish")!.click())
 
-    expect(text()).toContain("Mark one option as correct.")
+    expect(text()).toContain("isn't ready to publish")
+    expect(text()).toContain("1 issue needs fixing")
   })
 
-  it("takes the teacher to the question at fault", async () => {
+  it("takes the teacher to the first question at fault", async () => {
     publishQuizAction.mockResolvedValue({
       ok: false,
       reason: "invalid",
@@ -177,7 +191,7 @@ describe("when the server refuses", () => {
 
     await open(publishable())
     await act(async () => dialogButton("Publish")!.click())
-    await act(async () => dialogButton("Mark one option as correct.")!.click())
+    await act(async () => dialogButton("Go to first issue")!.click())
 
     expect(selected).toEqual(["q7"])
   })
@@ -192,8 +206,8 @@ describe("when the server refuses", () => {
     await open(publishable())
     await act(async () => dialogButton("Publish")!.click())
 
-    // No issue list: nothing is wrong with the quiz.
-    expect(text()).not.toContain("to fix first")
+    // No refusal block: nothing is wrong with the quiz.
+    expect(text()).not.toContain("isn't ready to publish")
   })
 })
 
@@ -241,7 +255,7 @@ describe("the footer stays inside the dialog", () => {
       url: published.url,
       hasUnpublishedChanges: true,
     })
-    expect(footerButtons()).toEqual(["Cancel", "Publish new version"])
+    expect(footerButtons()).toEqual(["Cancel", "Publish changes"])
   })
 
   it("keeps closing the link away from publishing one", async () => {
@@ -271,11 +285,46 @@ describe("a quiz that is already live", () => {
     })
 
     expect(text()).toContain("stays on the version they started")
-    expect(dialogButton("Publish new version")).toBeDefined()
+    expect(dialogButton("Publish changes")).toBeDefined()
   })
 
   it("shows the existing link before anything is republished", async () => {
     await open(publishable(), { status: "published", url: published.url })
     expect(text()).toContain(published.url)
+  })
+
+  it("offers no republish while nothing has changed - just a confirmation", async () => {
+    // Republishing an identical document would only mint a redundant version,
+    // so the clean state is a disabled "Published", not an action.
+    await open(publishable(), { status: "published", url: published.url })
+
+    const button = dialogButton("Published")
+    expect(button).toBeDefined()
+    expect(button?.disabled).toBe(true)
+    expect(publishQuizAction).not.toHaveBeenCalled()
+  })
+
+  it("calls the whole flow 'Publish changes' once the live quiz has edits", async () => {
+    await open(publishable(), {
+      status: "published",
+      url: published.url,
+      hasUnpublishedChanges: true,
+    })
+
+    expect(trigger().textContent).toContain("Publish changes")
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "Publish changes"
+    )
+  })
+
+  it("hands the submitted document back so the editor can reset its dirty tracking", async () => {
+    publishQuizAction.mockResolvedValue({ ok: true, published })
+    const receivedDocs: QuizDoc[] = []
+    const doc = publishable()
+
+    await open(doc, { onPublished: (d) => receivedDocs.push(d) })
+    await act(async () => dialogButton("Publish")!.click())
+
+    expect(receivedDocs).toEqual([doc])
   })
 })

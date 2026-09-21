@@ -15,7 +15,7 @@
  *     watches `state.doc` by identity, so selecting a question must not look
  *     like an edit, and neither must a no-op edit.
  */
-import type { Question, QuizDoc } from "@workspace/quiz-core"
+import type { Question, QuizDoc, QuizSettings } from "@workspace/quiz-core"
 
 export type EditorState = {
   doc: QuizDoc
@@ -30,6 +30,8 @@ export type EditorAction =
   | { type: "updateQuestion"; question: Question }
   | { type: "deleteQuestion"; id: string }
   | { type: "moveQuestion"; id: string; toIndex: number }
+  /** Quiz-level settings: duration, backtracking, shuffle. */
+  | { type: "updateSettings"; settings: QuizSettings }
   /** Adopt a document from the server, e.g. after a conflict is resolved. */
   | { type: "replaceDoc"; doc: QuizDoc }
 
@@ -104,6 +106,20 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       questions.splice(to, 0, moved)
 
       return { ...state, doc: { ...state.doc, questions } }
+    }
+
+    case "updateSettings": {
+      const prev = state.doc.settings
+      const next = action.settings
+      // A control re-emitting the values it was handed is not an edit.
+      if (
+        next.durationS === prev.durationS &&
+        next.allowBacktracking === prev.allowBacktracking &&
+        next.shuffleQuestions === prev.shuffleQuestions
+      ) {
+        return state
+      }
+      return { ...state, doc: { ...state.doc, settings: next } }
     }
 
     case "replaceDoc": {

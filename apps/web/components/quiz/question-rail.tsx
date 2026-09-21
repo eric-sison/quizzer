@@ -40,6 +40,13 @@ export function QuestionRail({
     issues.filter((i) => i.severity === "error" && i.questionId).map((i) => i.questionId)
   )
 
+  // Past ~100 questions, stop laying out and painting offscreen rows. Browser
+  // virtualization via content-visibility rather than a windowing library:
+  // rows keep their real DOM nodes, so dnd-kit's sortable measurements and the
+  // keyboard sensor keep working, and the fixed row height (h-9 + mb-0.5 =
+  // 38px) makes the intrinsic-size hint exact rather than an estimate.
+  const virtualize = questions.length > 100
+
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r bg-sidebar">
       <div className="flex h-10 shrink-0 items-center gap-2 px-3.5">
@@ -68,6 +75,7 @@ export function QuestionRail({
                 index={index}
                 selected={question.id === selectedId}
                 hasError={errorIds.has(question.id)}
+                virtualize={virtualize}
                 onSelect={() => onSelect(question.id)}
               />
             ))}
@@ -89,12 +97,14 @@ function QuestionRailItem({
   index,
   selected,
   hasError,
+  virtualize,
   onSelect,
 }: {
   question: Question
   index: number
   selected: boolean
   hasError: boolean
+  virtualize: boolean
   onSelect: () => void
 }) {
   const { isDragging, rowProps, handleProps } = useSortableRow(question.id)
@@ -109,7 +119,8 @@ function QuestionRailItem({
         selected
           ? "border-border bg-background shadow-xs"
           : "border-transparent hover:bg-background/60",
-        isDragging && "shadow-md"
+        isDragging && "shadow-md",
+        virtualize && "[contain-intrinsic-block-size:36px] [content-visibility:auto]"
       )}
     >
       {/* A real button, not a decorative icon: this is how the list is

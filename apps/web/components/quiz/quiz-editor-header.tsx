@@ -2,12 +2,13 @@
 
 import Link from "next/link"
 import { ChevronLeft, Eye } from "lucide-react"
-import type { QuizDoc, QuizStatus } from "@workspace/quiz-core"
+import type { QuizDoc, QuizSettings, QuizStatus } from "@workspace/quiz-core"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 
 import { PublishDialog } from "@/components/quiz/publish-dialog"
+import { QuizSettingsSheet } from "@/components/quiz/quiz-settings-sheet"
 import { SaveIndicator } from "@/components/quiz/save-indicator"
 import type { SaveStatus } from "@/lib/quiz/use-autosave"
 
@@ -31,9 +32,11 @@ export function QuizEditorHeader({
   hasUnpublishedChanges,
   saveStatus,
   onTitleChange,
+  onSettingsChange,
   onRetry,
   onReload,
   onSelectQuestion,
+  onPublished,
 }: {
   quizId: string
   doc: QuizDoc
@@ -42,9 +45,12 @@ export function QuizEditorHeader({
   hasUnpublishedChanges: boolean
   saveStatus: SaveStatus
   onTitleChange: (title: string) => void
+  onSettingsChange: (settings: QuizSettings) => void
   onRetry: () => void
   onReload: () => void
   onSelectQuestion: (id: string) => void
+  /** The server accepted this document; the editor resets its dirty tracking. */
+  onPublished: (doc: QuizDoc) => void
 }) {
   const title = doc.title
   return (
@@ -69,10 +75,10 @@ export function QuizEditorHeader({
         />
       </div>
 
-      {/* <Badge variant="outline">{STATUS_LABEL[status]}</Badge>
+      <Badge variant="outline">{STATUS_LABEL[status]}</Badge>
       {hasUnpublishedChanges ? (
         <Badge variant="secondary">Changes not published</Badge>
-      ) : null} */}
+      ) : null}
 
       <div className="flex-1" />
 
@@ -81,6 +87,8 @@ export function QuizEditorHeader({
         onRetry={onRetry}
         onReload={onReload}
       />
+
+      <QuizSettingsSheet settings={doc.settings} onChange={onSettingsChange} />
 
       <Button
         variant="outline"
@@ -98,6 +106,7 @@ export function QuizEditorHeader({
         url={url}
         hasUnpublishedChanges={hasUnpublishedChanges}
         onSelectQuestion={onSelectQuestion}
+        onPublished={onPublished}
       />
     </header>
   )

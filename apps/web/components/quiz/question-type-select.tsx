@@ -1,11 +1,7 @@
 "use client"
 
 import * as React from "react"
-import {
-  createQuestion,
-  type Question,
-  type QuestionKind,
-} from "@workspace/quiz-core"
+import type { Question, QuestionKind } from "@workspace/quiz-core"
 import { ChevronDown } from "lucide-react"
 import {
   AlertDialog,
@@ -73,7 +69,7 @@ export function QuestionTypeSelect({
 
   /** Keep the prompt and scoring; replace only the answer configuration. */
   function convert(kind: QuestionKind): Question {
-    const fresh = createQuestion(kind)
+    const fresh = typeDef(kind).createDefault()
     return {
       ...fresh,
       id: question.id,

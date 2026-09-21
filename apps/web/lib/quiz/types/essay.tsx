@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { emptyRichDoc, type RichDoc } from "@workspace/quiz-core"
+import { createQuestion, emptyRichDoc, type RichDoc } from "@workspace/quiz-core"
 import { ChevronRight, TextAlignStart } from "lucide-react"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -130,5 +130,6 @@ export const essayType: QuestionTypeDef<"essay"> = {
   menuLabel: "Essay",
   description: "Free written response, graded manually",
   icon: TextAlignStart,
+  createDefault: () => createQuestion("essay"),
   Editor: EssayEditor,
 }

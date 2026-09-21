@@ -1,5 +1,6 @@
 "use client"
 
+import { createQuestion } from "@workspace/quiz-core"
 import { CircleDot } from "lucide-react"
 import { RadioGroup } from "@workspace/ui/components/radio-group"
 
@@ -42,5 +43,6 @@ export const singleChoiceType: QuestionTypeDef<"single_choice"> = {
   menuLabel: "Multiple Choice (one answer)",
   description: "Radio buttons, exactly one correct",
   icon: CircleDot,
+  createDefault: () => createQuestion("single_choice"),
   Editor: SingleChoiceEditor,
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { FALSE_ID, TRUE_ID } from "@workspace/quiz-core"
+import { createQuestion, FALSE_ID, TRUE_ID } from "@workspace/quiz-core"
 import { ToggleLeft } from "lucide-react"
 import { Label } from "@workspace/ui/components/label"
 import { RadioGroup, RadioGroupItem } from "@workspace/ui/components/radio-group"
@@ -56,5 +56,6 @@ export const trueFalseType: QuestionTypeDef<"true_false"> = {
   menuLabel: "True / False",
   description: "Two fixed options, one correct",
   icon: ToggleLeft,
+  createDefault: () => createQuestion("true_false"),
   Editor: TrueFalseEditor,
 }

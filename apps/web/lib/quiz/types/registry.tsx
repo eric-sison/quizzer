@@ -40,6 +40,12 @@ export type QuestionTypeDef<K extends QuestionKind> = {
   description: string
   icon: LucideIcon
   /**
+   * A blank question of this kind with fresh ids. Delegates to quiz-core's
+   * `createQuestion`, so the registry stays the one place the editor shell
+   * reaches for a new question without owning the model defaults itself.
+   */
+  createDefault(): QuestionOfKind<K>
+  /**
    * The answer-configuration block only. Prompt, points and required are the
    * same for every kind and live in the editor shell.
    */

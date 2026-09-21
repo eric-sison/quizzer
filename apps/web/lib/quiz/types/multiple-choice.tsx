@@ -1,5 +1,6 @@
 "use client"
 
+import { createQuestion } from "@workspace/quiz-core"
 import { SquareCheckBig } from "lucide-react"
 
 import { OptionListEditor } from "@/components/quiz/option-list-editor"
@@ -26,5 +27,6 @@ export const multipleChoiceType: QuestionTypeDef<"multiple_choice"> = {
   menuLabel: "Multiple Choice (many answers)",
   description: "Checkboxes, one or more correct",
   icon: SquareCheckBig,
+  createDefault: () => createQuestion("multiple_choice"),
   Editor: MultipleChoiceEditor,
 }

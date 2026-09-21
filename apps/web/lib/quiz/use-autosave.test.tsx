@@ -197,7 +197,7 @@ describe("useAutosave", () => {
     expect(latest().status.kind).toBe("saved")
   })
 
-  it("stops retrying after four attempts and waits to be asked", async () => {
+  it("stops retrying after five attempts and waits to be asked", async () => {
     const doc = createQuizDoc("M")
     const save = vi.fn<Save>(
       async (): Promise<SaveResult> => ({
@@ -210,17 +210,17 @@ describe("useAutosave", () => {
     await render(doc, save)
     await render(titled(doc, "Midterm"), save)
     await tick()
-    for (const attempt of [1, 2, 3]) await tick(backoffMs(attempt))
+    for (const attempt of [1, 2, 3, 4]) await tick(backoffMs(attempt))
 
-    expect(save).toHaveBeenCalledTimes(4)
+    expect(save).toHaveBeenCalledTimes(5)
     expect(latest().status).toEqual({ kind: "failed", message: "down", canRetry: true })
 
     // It has given up, so nothing more happens by itself.
     await tick(60_000)
-    expect(save).toHaveBeenCalledTimes(4)
+    expect(save).toHaveBeenCalledTimes(5)
 
     await act(async () => latest().retryNow())
-    expect(save).toHaveBeenCalledTimes(5)
+    expect(save).toHaveBeenCalledTimes(6)
   })
 
   it("treats a thrown Server Action as transient rather than guessing", async () => {

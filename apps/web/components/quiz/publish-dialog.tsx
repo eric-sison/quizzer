@@ -40,6 +40,7 @@ export function PublishDialog({
   url,
   hasUnpublishedChanges,
   onSelectQuestion,
+  onPublished,
 }: {
   quizId: string
   doc: QuizDoc
@@ -49,6 +50,12 @@ export function PublishDialog({
   hasUnpublishedChanges: boolean
   /** Jump the editor to a question, so an issue is one click from its cause. */
   onSelectQuestion: (id: string) => void
+  /**
+   * The server accepted this document. Hands back the doc as it stood when
+   * Publish was pressed, so the editor can reset its dirty tracking without
+   * mistaking a mid-flight edit for a published one.
+   */
+  onPublished?: (doc: QuizDoc) => void
 }) {
   const router = useRouter()
   const [open, setOpen] = React.useState(false)
@@ -73,12 +80,17 @@ export function PublishDialog({
   }
 
   function publish() {
+    // Captured now, not at resolution: an edit made while the request is in
+    // flight was not part of what the server published.
+    const submitted = doc
+
     startTransition(async () => {
       const result = await publishQuizAction(quizId)
 
       if (result.ok) {
         setServerIssues(null)
         setPublishedUrl(result.published.url)
+        onPublished?.(submitted)
         toast.add({
           title: `Version ${result.published.versionNo} is live`,
           description: result.published.url,
@@ -128,9 +140,11 @@ export function PublishDialog({
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle>
-              {live && !hasUnpublishedChanges && !publishedUrl
-                ? "This quiz is live"
-                : "Publish this quiz"}
+              {live && hasUnpublishedChanges
+                ? "Publish changes"
+                : live
+                  ? "This quiz is live"
+                  : "Publish this quiz"}
             </DialogTitle>
             <DialogDescription>
               {live
@@ -141,7 +155,7 @@ export function PublishDialog({
 
           <div className="flex flex-col gap-4">
             {blocked ? (
-              <IssueList issues={issues} onSelectQuestion={onSelectQuestion} onGo={() => reset(false)} />
+              <IssueSummary issues={issues} onSelectQuestion={onSelectQuestion} onGo={() => reset(false)} />
             ) : (
               <Warnings issues={issues} />
             )}
@@ -163,9 +177,24 @@ export function PublishDialog({
             <Button variant="outline" disabled={pending} onClick={() => reset(false)}>
               {publishedUrl ? "Done" : "Cancel"}
             </Button>
-            <Button disabled={pending} onClick={publish}>
-              {pending ? "Publishing…" : live ? "Publish new version" : "Publish"}
-            </Button>
+            {/* A live quiz with nothing new to publish gets a confirmation,
+                not an action: republishing an identical document would only
+                mint a redundant version. The action returns the moment an
+                edit makes it meaningful. */}
+            {live && !hasUnpublishedChanges ? (
+              <Button disabled>
+                <Check />
+                Published
+              </Button>
+            ) : (
+              <Button disabled={pending} onClick={publish}>
+                {pending
+                  ? "Publishing…"
+                  : live
+                    ? "Publish changes"
+                    : "Publish"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -173,7 +202,13 @@ export function PublishDialog({
   )
 }
 
-function IssueList({
+/**
+ * One general message, deliberately not a list. A quiz can carry dozens of
+ * issues, and itemizing them here turns the dialog into a scroll of errors;
+ * the rail's red dots already say where each problem lives. One button jumps
+ * to the first offending question so the fix is still a single click away.
+ */
+function IssueSummary({
   issues,
   onSelectQuestion,
   onGo,
@@ -183,36 +218,35 @@ function IssueList({
   onGo: () => void
 }) {
   const errors = issues.filter((i) => i.severity === "error")
+  const firstQuestionId = errors.find((i) => i.questionId)?.questionId ?? null
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
       <p className="flex items-center gap-2 text-sm font-medium text-destructive">
         <TriangleAlert className="size-4" />
-        {errors.length} {errors.length === 1 ? "thing" : "things"} to fix first
+        This quiz isn&apos;t ready to publish
       </p>
-      <ul className="flex flex-col gap-1">
-        {errors.map((issue, i) => {
-          const questionId = issue.questionId
-          return (
-          <li key={`${questionId ?? "quiz"}-${issue.code}-${i}`}>
-            {questionId ? (
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectQuestion(questionId)
-                  onGo()
-                }}
-                className="text-left text-sm text-foreground underline-offset-4 hover:underline"
-              >
-                {issue.message}
-              </button>
-            ) : (
-              <span className="text-sm text-foreground">{issue.message}</span>
-            )}
-          </li>
-          )
-        })}
-      </ul>
+      <p className="text-sm text-foreground">
+        {errors.length === 1 ? "1 issue needs" : `${errors.length} issues need`}{" "}
+        fixing first.
+        {firstQuestionId
+          ? " Questions with problems are marked with a red dot in the list on the left."
+          : ""}
+      </p>
+      {firstQuestionId ? (
+        <div className="flex">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              onSelectQuestion(firstQuestionId)
+              onGo()
+            }}
+          >
+            Go to first issue
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
