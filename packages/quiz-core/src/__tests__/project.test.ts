@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest"
 
+import { answerAsRichDoc } from "../manifest"
 import { AnswerLeakError, assertNoAnswerLeak, extractKey, project } from "../project"
-import { richDocSchema } from "../rich-text"
+import { emptyRichDoc, richDocSchema } from "../rich-text"
 import { FALSE_ID, TRUE_ID } from "../types/true-false"
-import { multipleChoice, sampleQuiz, singleChoice } from "./fixtures"
+import {
+  fillInBlank,
+  fullSampleQuiz,
+  matching,
+  multipleChoice,
+  numeric,
+  ordering,
+  sampleQuiz,
+  singleChoice,
+} from "./fixtures"
 
 describe("project", () => {
   it("emits no answer-bearing key anywhere in the manifest", () => {
@@ -172,5 +182,155 @@ describe("extractKey", () => {
       kind: "multiple_choice",
       correctOptionIds: q.options.map((o) => o.id),
     })
+  })
+})
+
+describe("the new kinds project without their answers", () => {
+  it("a fully-populated eight-kind quiz leaks nothing, explanations included", () => {
+    const manifest = project("quiz-1", fullSampleQuiz())
+    const serialised = JSON.stringify(manifest)
+
+    for (const forbidden of [
+      "correct",
+      "tolerance",
+      "accepted",
+      "pairs",
+      "distractor",
+      "blanks",
+      "rubric",
+      "explanation",
+      "caseSensitive",
+      "case_sensitive",
+    ]) {
+      expect(serialised).not.toContain(forbidden)
+    }
+  })
+
+  it("projects twice to byte-identical output", () => {
+    const doc = fullSampleQuiz()
+    expect(JSON.stringify(project("quiz-1", doc))).toBe(
+      JSON.stringify(project("quiz-1", doc))
+    )
+  })
+
+  it("numeric ships the unit and only the unit", () => {
+    const q = numeric("Boiling point?", { correctValue: 100, tolerance: 1, unit: "°C" })
+    const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] }).questions[0]!
+
+    expect(projected.unit).toBe("°C")
+    expect(Object.keys(projected).sort()).toEqual([
+      "choices",
+      "id",
+      "kind",
+      "points",
+      "prompt",
+      "required",
+      "shuffle_options",
+      "unit",
+    ])
+  })
+
+  it("numeric omits a blank unit", () => {
+    const q = numeric("q", { unit: "  " })
+    const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] }).questions[0]!
+    expect(projected).not.toHaveProperty("unit")
+  })
+
+  it("fill-in-the-blank ships only the count of blanks", () => {
+    const q = fillInBlank("q ___ ___ ___", [["a"], ["b"], ["c"]])
+    const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] }).questions[0]!
+    expect(projected.blank_count).toBe(3)
+  })
+
+  it("matching presents right items in id order, distractors indistinguishable", () => {
+    const q = matching(
+      "q",
+      [["L1", "R1"], ["L2", "R2"], ["L3", "R3"]],
+      ["D1"]
+    )
+    const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] }).questions[0]!
+
+    // Left items keep authored order.
+    expect(projected.left_items!.map((c) => c.id)).toEqual(q.pairs.map((p) => p.leftId))
+    expect(projected.left_items!.map((c) => c.label)).toEqual(["L1", "L2", "L3"])
+
+    // Right items are pairs + distractors sorted by id, not authored order.
+    const expectedIds = [...q.pairs.map((p) => p.rightId), q.distractors[0]!.id].sort()
+    expect(projected.right_items!.map((c) => c.id)).toEqual(expectedIds)
+
+    // Nothing marks the distractor, and every right item looks the same shape.
+    for (const item of projected.right_items!) {
+      expect(Object.keys(item).sort()).toEqual(["id", "label"])
+    }
+  })
+
+  it("ordering presents choices in id order, never the authored (correct) order", () => {
+    const q = ordering("q", ["First", "Second", "Third", "Fourth"])
+    const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] }).questions[0]!
+
+    const authored = q.items.map((i) => i.id)
+    expect(projected.choices.map((c) => c.id)).toEqual([...authored].sort())
+    // The labels are all present; the key is the only place the order lives.
+    expect(projected.choices.map((c) => c.label).sort()).toEqual(
+      ["First", "Fourth", "Second", "Third"]
+    )
+  })
+
+  it("extracts the four new key shapes", () => {
+    const doc = fullSampleQuiz()
+    const key = extractKey(doc)
+    const byKind = Object.fromEntries(
+      doc.questions.map((q) => [q.kind, key.keys[q.id]])
+    )
+
+    expect(byKind.numeric).toEqual({ kind: "numeric", correctValue: 100, tolerance: 0.5 })
+    expect(byKind.fill_in_blank).toEqual({
+      kind: "fill_in_blank",
+      acceptedAnswers: [["hydrogen", "H"], ["oxygen", "O"]],
+      caseSensitive: false,
+    })
+    const matchingDoc = doc.questions.find((q) => q.kind === "matching")!
+    if (matchingDoc.kind !== "matching") throw new Error("unreachable")
+    expect(byKind.matching).toEqual({
+      kind: "matching",
+      correctPairs: Object.fromEntries(
+        matchingDoc.pairs.map((p) => [p.leftId, p.rightId])
+      ),
+    })
+    const orderingDoc = doc.questions.find((q) => q.kind === "ordering")!
+    if (orderingDoc.kind !== "ordering") throw new Error("unreachable")
+    expect(byKind.ordering).toEqual({
+      kind: "ordering",
+      correctOrder: orderingDoc.items.map((i) => i.id),
+    })
+  })
+
+  it("projects the quiz description when set, omits it when blank", () => {
+    const withDescription = { ...sampleQuiz(), description: "  Bring a calculator.  " }
+    expect(project("quiz-1", withDescription).description).toBe("Bring a calculator.")
+
+    const blank = { ...sampleQuiz(), description: "   " }
+    expect(project("quiz-1", blank)).not.toHaveProperty("description")
+    expect(project("quiz-1", sampleQuiz())).not.toHaveProperty("description")
+  })
+
+  it("projects per-question shuffle_options from the choice kinds only", () => {
+    const doc = fullSampleQuiz()
+    const single = doc.questions.find((q) => q.kind === "single_choice")!
+    if (single.kind !== "single_choice") throw new Error("unreachable")
+    single.shuffleOptions = true
+
+    const manifest = project("quiz-1", doc)
+    const byKind = Object.fromEntries(manifest.questions.map((q) => [q.kind, q]))
+    expect(byKind.single_choice!.shuffle_options).toBe(true)
+    expect(byKind.multiple_choice!.shuffle_options).toBe(false)
+    expect(byKind.true_false!.shuffle_options).toBe(false)
+    expect(byKind.ordering!.shuffle_options).toBe(false)
+  })
+})
+
+describe("answerAsRichDoc with a matching record", () => {
+  it("degrades a stale matching answer to an empty document", () => {
+    expect(answerAsRichDoc({ "left-1": "right-2" })).toEqual(emptyRichDoc())
   })
 })

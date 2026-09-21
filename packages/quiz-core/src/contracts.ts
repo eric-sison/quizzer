@@ -149,6 +149,7 @@ export const previewExamRequestSchema = z.strictObject({
 
 export const previewExamResponseSchema = z.strictObject({
   title: z.string(),
+  description: z.string().optional(),
   duration_s: z.number().int().min(1),
   allow_backtracking: z.boolean(),
   shuffle_questions: z.boolean(),

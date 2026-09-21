@@ -31,3 +31,15 @@ export const uploadMediaResponseSchema = z.strictObject({
 })
 
 export type UploadMediaResponse = z.infer<typeof uploadMediaResponseSchema>
+
+/** One row of a quiz's media library, for the reuse picker. */
+export const quizMediaItemSchema = z.strictObject({
+  id: z.uuid(),
+  contentType: z.string(),
+  sizeBytes: z.number().int().min(0),
+  createdAt: z.string(),
+})
+
+export const listQuizMediaResponseSchema = z.array(quizMediaItemSchema)
+
+export type QuizMediaItem = z.infer<typeof quizMediaItemSchema>

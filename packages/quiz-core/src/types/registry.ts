@@ -3,8 +3,12 @@ import type { Issue } from "../issue"
 import type { ManifestQuestion } from "../manifest"
 import type { Question, QuestionKind, QuestionOfKind } from "../question"
 import { essayLogic } from "./essay"
+import { fillInBlankLogic } from "./fill-in-blank"
 import type { QuestionLogic } from "./logic"
+import { matchingLogic } from "./matching"
 import { multipleChoiceLogic } from "./multiple-choice"
+import { numericLogic } from "./numeric"
+import { orderingLogic } from "./ordering"
 import { singleChoiceLogic } from "./single-choice"
 import { trueFalseLogic } from "./true-false"
 
@@ -16,6 +20,10 @@ export const questionLogic = {
   true_false: trueFalseLogic,
   single_choice: singleChoiceLogic,
   multiple_choice: multipleChoiceLogic,
+  numeric: numericLogic,
+  fill_in_blank: fillInBlankLogic,
+  matching: matchingLogic,
+  ordering: orderingLogic,
   essay: essayLogic,
 } satisfies { [K in QuestionKind]: QuestionLogic<K> }
 

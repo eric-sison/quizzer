@@ -5,7 +5,7 @@
  */
 import type { Issue } from "../issue"
 import type { ChoiceOption } from "../question"
-import { isRichDocEmpty, toPlainText } from "../rich-text"
+import { isRichDocEmpty, richDocHasImage, toPlainText } from "../rich-text"
 import { issue, manifestChoice } from "./logic"
 
 export const MIN_OPTIONS = 2
@@ -26,17 +26,26 @@ export function validateOptions(questionId: string, options: ChoiceOption[]): Is
 
   const seen = new Map<string, number>()
   options.forEach((option, index) => {
-    if (isRichDocEmpty(option.labelDoc)) {
-      issues.push(
-        issue(
-          questionId,
-          `options.${index}.labelDoc`,
-          "empty_option",
-          "An empty option is invisible to students."
+    const noText = isRichDocEmpty(option.labelDoc)
+
+    // An image-only option is perfectly visible, so an image satisfies the
+    // emptiness rule. It also opts out of duplicate detection below, which
+    // compares text: two different pictures with no caption are not "the same
+    // option", and this validator cannot see the pixels.
+    if (noText) {
+      if (!richDocHasImage(option.labelDoc)) {
+        issues.push(
+          issue(
+            questionId,
+            `options.${index}.labelDoc`,
+            "empty_option",
+            "An empty option is invisible to students."
+          )
         )
-      )
+      }
       return
     }
+
     const key = toPlainText(option.labelDoc).trim().toLowerCase()
     const first = seen.get(key)
     if (first === undefined) {

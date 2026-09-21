@@ -34,7 +34,7 @@ export const singleChoiceLogic: QuestionLogic<"single_choice"> = {
   },
 
   toManifest(q) {
-    return baseManifest(q, optionChoices(q.options))
+    return { ...baseManifest(q, optionChoices(q.options)), shuffle_options: q.shuffleOptions }
   },
 
   toAnswerKey(q) {

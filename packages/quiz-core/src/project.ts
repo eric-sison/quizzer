@@ -38,6 +38,25 @@ const FORBIDDEN_KEYS = new Set([
   "rubric",
   "rubricDoc",
   "rubric_doc",
+  "explanation",
+  "explanationDoc",
+  "explanation_doc",
+  "correctValue",
+  "correct_value",
+  "tolerance",
+  "acceptedAnswers",
+  "accepted_answers",
+  "correctPairs",
+  "correct_pairs",
+  "correctOrder",
+  "correct_order",
+  "pairs",
+  "distractors",
+  "blanks",
+  "caseSensitive",
+  "case_sensitive",
+  // Deliberately NOT "items": too generic, and ordering's secret is the ORDER
+  // of its choices, which no key-name scan can see. A projection test guards it.
 ])
 
 function scanForForbiddenKeys(value: unknown, path: string): void {
@@ -82,6 +101,10 @@ export function project(quizId: string, doc: QuizDoc): ExamManifest {
     shuffle_questions: doc.settings.shuffleQuestions,
     questions: doc.questions.map(questionToManifest),
   }
+
+  // Student-facing blurb for the landing page and link-entry preview.
+  const description = doc.description?.trim()
+  if (description) manifest.description = description
 
   assertNoAnswerLeak(manifest)
   return manifest

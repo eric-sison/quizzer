@@ -1,9 +1,17 @@
 import {
+  createBlank,
+  createDistractor,
+  createMatchPair,
   createOption,
+  createOrderingItem,
   createQuestion,
   createQuizDoc,
   type EssayQuestion,
+  type FillInBlankQuestion,
+  type MatchingQuestion,
   type MultipleChoiceQuestion,
+  type NumericQuestion,
+  type OrderingQuestion,
   type QuizDoc,
   type SingleChoiceQuestion,
   type TrueFalseQuestion,
@@ -44,7 +52,58 @@ export function essay(prompt: string, extra: Partial<EssayQuestion> = {}): Essay
   return { ...createQuestion("essay"), promptDoc: richDocFromText(prompt), ...extra }
 }
 
-/** A valid quiz exercising all four question kinds. */
+export function numeric(
+  prompt: string,
+  extra: Partial<NumericQuestion> = {}
+): NumericQuestion {
+  return {
+    ...createQuestion("numeric"),
+    promptDoc: richDocFromText(prompt),
+    correctValue: 42,
+    tolerance: 0.5,
+    ...extra,
+  }
+}
+
+export function fillInBlank(
+  prompt: string,
+  blanks: string[][],
+  extra: Partial<FillInBlankQuestion> = {}
+): FillInBlankQuestion {
+  return {
+    ...createQuestion("fill_in_blank"),
+    promptDoc: richDocFromText(prompt),
+    blanks: blanks.map((acceptedAnswers) => ({ ...createBlank(), acceptedAnswers })),
+    ...extra,
+  }
+}
+
+export function matching(
+  prompt: string,
+  pairs: [string, string][],
+  distractors: string[] = []
+): MatchingQuestion {
+  return {
+    ...createQuestion("matching"),
+    promptDoc: richDocFromText(prompt),
+    pairs: pairs.map(([leftText, rightText]) => ({
+      ...createMatchPair(),
+      leftText,
+      rightText,
+    })),
+    distractors: distractors.map((text) => createDistractor(text)),
+  }
+}
+
+export function ordering(prompt: string, labels: string[]): OrderingQuestion {
+  return {
+    ...createQuestion("ordering"),
+    promptDoc: richDocFromText(prompt),
+    items: labels.map((label) => createOrderingItem(label)),
+  }
+}
+
+/** A valid quiz exercising the four original question kinds. */
 export function sampleQuiz(): QuizDoc {
   return {
     ...createQuizDoc("Biology Midterm"),
@@ -65,6 +124,44 @@ export function sampleQuiz(): QuizDoc {
         maxWords: 300,
         rubricDoc: richDocFromText("Award marks for cristae, matrix, surface area."),
       }),
+    ],
+  }
+}
+
+/** A valid quiz exercising every question kind, teacher-only fields included. */
+export function fullSampleQuiz(): QuizDoc {
+  const base = sampleQuiz()
+  return {
+    ...base,
+    questions: [
+      ...base.questions.map((q) => ({
+        ...q,
+        explanationDoc: richDocFromText(`Because of ${q.kind}.`),
+      })),
+      numeric("What is the boiling point of water at sea level, in °C?", {
+        correctValue: 100,
+        tolerance: 0.5,
+        unit: "°C",
+      }),
+      fillInBlank("Water is made of ___ and ___.", [
+        ["hydrogen", "H"],
+        ["oxygen", "O"],
+      ]),
+      matching(
+        "Match each organelle to its role.",
+        [
+          ["Mitochondrion", "ATP synthesis"],
+          ["Chloroplast", "Photosynthesis"],
+          ["Ribosome", "Protein synthesis"],
+        ],
+        ["Waste disposal"]
+      ),
+      ordering("Order the phases of mitosis.", [
+        "Prophase",
+        "Metaphase",
+        "Anaphase",
+        "Telophase",
+      ]),
     ],
   }
 }

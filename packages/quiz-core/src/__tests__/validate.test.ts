@@ -3,7 +3,18 @@ import { describe, expect, it } from "vitest"
 import { hasErrors } from "../issue"
 import { createQuizDoc } from "../question"
 import { canPublish, validateQuiz } from "../validate"
-import { essay, multipleChoice, sampleQuiz, singleChoice, trueFalse } from "./fixtures"
+import {
+  essay,
+  fillInBlank,
+  fullSampleQuiz,
+  matching,
+  multipleChoice,
+  numeric,
+  ordering,
+  sampleQuiz,
+  singleChoice,
+  trueFalse,
+} from "./fixtures"
 
 function codesFor(doc: Parameters<typeof validateQuiz>[0]) {
   return validateQuiz(doc).map((i) => i.code)
@@ -54,6 +65,29 @@ describe("validateQuiz", () => {
     it("requires at least two options", () => {
       const doc = { ...sampleQuiz(), questions: [singleChoice("q", [["a", true]])] }
       expect(codesFor(doc)).toContain("too_few_options")
+    })
+
+    it("accepts image-only options, and never calls two of them duplicates", () => {
+      const question = singleChoice("Which diagram shows mitosis?", [
+        ["", true],
+        ["", false],
+      ])
+      question.options = question.options.map((option, i) => ({
+        ...option,
+        labelDoc: {
+          type: "doc" as const,
+          content: [
+            {
+              type: "image" as const,
+              attrs: { mediaId: `0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6${i}`, alt: "" },
+            },
+          ],
+        },
+      }))
+
+      const codes = codesFor({ ...sampleQuiz(), questions: [question] })
+      expect(codes).not.toContain("empty_option")
+      expect(codes).not.toContain("duplicate_option")
     })
   })
 
@@ -119,5 +153,94 @@ describe("validateQuiz", () => {
     for (const issue of validateQuiz(doc)) {
       expect(issue.questionId).toBe(bad.id)
     }
+  })
+
+  it("passes a quiz exercising every kind", () => {
+    expect(validateQuiz(fullSampleQuiz())).toEqual([])
+    expect(canPublish(fullSampleQuiz())).toBe(true)
+  })
+
+  describe("numeric", () => {
+    it("requires the correct value", () => {
+      const question = numeric("q")
+      delete question.correctValue
+      const doc = { ...sampleQuiz(), questions: [question] }
+      expect(codesFor(doc)).toContain("no_correct_value")
+      expect(canPublish(doc)).toBe(false)
+    })
+
+    it("accepts an exact-match question (tolerance 0)", () => {
+      const doc = { ...sampleQuiz(), questions: [numeric("q", { tolerance: 0 })] }
+      expect(validateQuiz(doc)).toEqual([])
+    })
+  })
+
+  describe("fill in the blank", () => {
+    it("requires at least one blank", () => {
+      const doc = { ...sampleQuiz(), questions: [fillInBlank("q", [])] }
+      expect(codesFor(doc)).toContain("no_blanks")
+    })
+
+    it("requires each blank to accept at least one non-empty response", () => {
+      const doc = {
+        ...sampleQuiz(),
+        questions: [fillInBlank("q", [["hydrogen"], ["  "]])],
+      }
+      const issues = validateQuiz(doc)
+      expect(issues.map((i) => i.code)).toContain("empty_blank")
+      expect(issues.find((i) => i.code === "empty_blank")?.field).toBe(
+        "blanks.1.acceptedAnswers"
+      )
+    })
+  })
+
+  describe("matching", () => {
+    it("requires at least two pairs", () => {
+      const doc = { ...sampleQuiz(), questions: [matching("q", [["a", "b"]])] }
+      expect(codesFor(doc)).toContain("too_few_pairs")
+    })
+
+    it("flags empty pair sides and empty distractors", () => {
+      const doc = {
+        ...sampleQuiz(),
+        questions: [matching("q", [["a", ""], ["", "d"]], ["  "])],
+      }
+      const codes = codesFor(doc)
+      expect(codes.filter((c) => c === "empty_pair_side")).toHaveLength(2)
+      expect(codes).toContain("empty_distractor")
+    })
+
+    it("rejects a right column made ambiguous by duplicates, distractors included", () => {
+      const doc = {
+        ...sampleQuiz(),
+        questions: [matching("q", [["a", "ATP"], ["b", "DNA"]], [" atp "])],
+      }
+      expect(codesFor(doc)).toContain("duplicate_right_item")
+    })
+
+    it("rejects duplicate left items", () => {
+      const doc = {
+        ...sampleQuiz(),
+        questions: [matching("q", [["Cell", "x"], [" cell ", "y"]])],
+      }
+      expect(codesFor(doc)).toContain("duplicate_left_item")
+    })
+  })
+
+  describe("ordering", () => {
+    it("requires at least two items", () => {
+      const doc = { ...sampleQuiz(), questions: [ordering("q", ["only one"])] }
+      expect(codesFor(doc)).toContain("too_few_items")
+    })
+
+    it("flags empty and duplicate items", () => {
+      const doc = {
+        ...sampleQuiz(),
+        questions: [ordering("q", ["First", "", "first "])],
+      }
+      const codes = codesFor(doc)
+      expect(codes).toContain("empty_item")
+      expect(codes).toContain("duplicate_item")
+    })
   })
 })

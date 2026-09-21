@@ -172,6 +172,11 @@ export function isRichDocEmpty(doc: RichDoc): boolean {
   return toPlainText(doc).trim().length === 0
 }
 
+/** True when the document carries at least one image block. */
+export function richDocHasImage(doc: RichDoc): boolean {
+  return doc.content.some((block) => block.type === "image")
+}
+
 /**
  * Word count for plain text.
  *

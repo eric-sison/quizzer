@@ -37,6 +37,24 @@ export const manifestQuestionSchema = z.strictObject({
   required: z.boolean(),
   min_words: z.number().int().min(0).optional(),
   max_words: z.number().int().min(1).optional(),
+  /**
+   * Per-kind presentation data. Flat optional fields (the min_words precedent)
+   * rather than a per-kind bag, and note what is NOT here: numeric's value and
+   * tolerance, the blanks' accepted responses, the matching pairs, ordering's
+   * correct sequence. Field names must never contain the substrings "correct",
+   * "answer" or "rubric" - the desktop's leak test greps raw session JSON.
+   */
+  unit: z.string().optional(),
+  blank_count: z.number().int().min(1).optional(),
+  /** Matching: prompts, in authored order (it carries no secret). */
+  left_items: z.array(manifestChoiceSchema).optional(),
+  /**
+   * Matching: pair rights plus distractors, sorted by their random ids so the
+   * order says nothing, and with nothing marking which are distractors.
+   */
+  right_items: z.array(manifestChoiceSchema).optional(),
+  /** Defaulted so manifests published before the field existed still parse. */
+  shuffle_options: z.boolean().default(false),
 })
 
 export const examManifestSchema = z.strictObject({
@@ -49,6 +67,8 @@ export const examManifestSchema = z.strictObject({
    * existed still parse. Exam configuration, not an answer: it may ship.
    */
   shuffle_questions: z.boolean().default(false),
+  /** Student-facing blurb, shown on the landing page and link-entry preview. */
+  description: z.string().optional(),
   questions: z.array(manifestQuestionSchema),
 })
 
@@ -59,9 +79,12 @@ export type ExamManifest = z.infer<typeof examManifestSchema>
 /**
  * What a student submits for one question.
  *
- * A chosen option is its id, a multiple-choice answer is the list of ids, and
- * an essay is a `RichDoc` written in the same constrained editor the teacher
- * authored the prompt in.
+ * A chosen option is its id (numeric reuses the bare string for the student's
+ * raw input), a multiple-choice answer is the list of ids (fill-in-the-blank
+ * reuses it positionally, ordering as the arranged sequence of ids), a
+ * matching answer maps each left id to the chosen right id, and an essay is a
+ * `RichDoc` written in the same constrained editor the teacher authored the
+ * prompt in.
  *
  * The bare string is kept on purpose. Essays were plain text before, so stored
  * answers and older clients still send one, and `richDocFromText` turns it into
@@ -76,6 +99,9 @@ export const answerValueSchema = z.union([
   z.string(),
   z.array(z.string()),
   richDocSchema,
+  // Matching: leftId -> rightId. Cannot collide with richDocSchema, whose
+  // `content` must be an array and `type` the literal "doc".
+  z.record(z.string(), z.string()),
 ])
 export type AnswerValue = z.infer<typeof answerValueSchema>
 
@@ -84,5 +110,9 @@ export function answerAsRichDoc(value: AnswerValue | undefined): RichDoc {
   if (value === undefined) return emptyRichDoc()
   if (typeof value === "string") return richDocFromText(value)
   if (Array.isArray(value)) return emptyRichDoc()
-  return value
+  // A matching record stored before the question became an essay is not a
+  // document; degrade like every other stale shape rather than handing the
+  // editor a non-doc.
+  if (!("type" in value) || value.type !== "doc") return emptyRichDoc()
+  return value as RichDoc
 }
