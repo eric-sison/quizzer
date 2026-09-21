@@ -1,0 +1,1 @@
+ALTER TABLE "quizzes" ADD COLUMN "published_doc_version" integer;
