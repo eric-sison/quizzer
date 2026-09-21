@@ -1,0 +1,85 @@
+/**
+ * The authoring registry: teacher-side presentation for each question kind.
+ *
+ * Deliberately separate from the logic registry in @workspace/quiz-core, which
+ * validates and projects. That one runs on the server and must stay free of
+ * React; this one is only ever rendered.
+ *
+ * Adding a kind means one file here, one entry below, and the matching logic in
+ * quiz-core. Nothing generic - not the editor shell, not the type menu, not the
+ * question list - needs to learn about it.
+ */
+import type { Question, QuestionKind, QuestionOfKind } from "@workspace/quiz-core"
+import type { LucideIcon } from "lucide-react"
+import { CircleDot, SquareCheckBig, TextAlignStart, ToggleLeft } from "lucide-react"
+
+import { essayType } from "./essay"
+import { multipleChoiceType } from "./multiple-choice"
+import { singleChoiceType } from "./single-choice"
+import { trueFalseType } from "./true-false"
+
+export type QuestionEditorProps<K extends QuestionKind> = {
+  question: QuestionOfKind<K>
+  /**
+   * Takes the whole union rather than the narrowed kind, because switching
+   * between one-answer and many-answer changes a question's kind in place.
+   */
+  onChange: (next: Question) => void
+}
+
+export type QuestionTypeDef<K extends QuestionKind> = {
+  kind: K
+  /** Short form, for the type button and the question rail. */
+  label: string
+  /**
+   * Long form, for the type menu. The two multiple-choice variants share a
+   * `label`, so the menu needs something that tells them apart.
+   */
+  menuLabel: string
+  /** Shown under the menu label. */
+  description: string
+  icon: LucideIcon
+  /**
+   * The answer-configuration block only. Prompt, points and required are the
+   * same for every kind and live in the editor shell.
+   */
+  Editor: React.ComponentType<QuestionEditorProps<K>>
+}
+
+/**
+ * Annotated rather than `satisfies`, so that indexing by a generic kind
+ * resolves to that kind's definition instead of a union of all four. The
+ * annotation still makes a missing or mislabelled entry a compile error.
+ */
+export type QuestionTypeRegistry = { [K in QuestionKind]: QuestionTypeDef<K> }
+
+export const questionTypes: QuestionTypeRegistry = {
+  true_false: trueFalseType,
+  single_choice: singleChoiceType,
+  multiple_choice: multipleChoiceType,
+  essay: essayType,
+}
+
+export const ICONS: Record<QuestionKind, LucideIcon> = {
+  true_false: ToggleLeft,
+  single_choice: CircleDot,
+  multiple_choice: SquareCheckBig,
+  essay: TextAlignStart,
+}
+
+/** Menu order. Explicit so it does not depend on object key order. */
+export const TYPE_MENU_ORDER: QuestionKind[] = [
+  "true_false",
+  "single_choice",
+  "multiple_choice",
+  "essay",
+]
+
+export function typeDef<K extends QuestionKind>(kind: K): QuestionTypeDef<K> {
+  return questionTypes[kind]
+}
+
+/** Short label for the question list, e.g. "Multiple Choice". */
+export function typeLabel(kind: QuestionKind): string {
+  return questionTypes[kind].label
+}
