@@ -1,8 +1,8 @@
 # Quiz Maker Engine — architecture & implementation plan
 
-> **Status: planning.** Most of what follows is not built yet. See
-> [Repository status](#repository-status) for what exists today. Treat code
-> blocks as the intended shape, not as a description of current files.
+> **Status: implemented.** Everything below is built; see
+> [Repository status](#repository-status) for the per-package state. Code
+> blocks show the intended shape, which the current files follow.
 
 Quizzer is a lockdown exam system in three parts:
 
@@ -29,7 +29,7 @@ contract it publishes into.
 | `packages/ui` | **Built.** shadcn `base-nova` primitives on Base UI. Consumed by both `apps/web` and `apps/desktop`. |
 | `packages/quiz-core` | **Built.** Domain types, rich-text allowlist, `project()` / `extractKey()` / `validateQuiz()`, 37 tests. |
 | `apps/api` | **Complete for this phase.** Hono on :3000, seven tables migrated, error envelope, two separate auth surfaces, full quiz CRUD, publish/unpublish with token minting, the public `/e/:token` landing page, and all five exam endpoints. |
-| `apps/web` | **Authoring live.** Next.js 16 on :3001. Sidebar shell, quiz list, and the editor: rich-text prompts, all four question types, drag reordering, and autosave over HTTP with conflict and failure states. Preview and publish not yet. |
+| `apps/web` | **Built.** Next.js 16 on :3001. Sidebar shell, quiz list, and the editor: rich-text prompts, all four question types, drag reordering, autosave over HTTP with conflict and failure states, the quiz-settings sheet, preview, and the publish dialog with copy-link and unpublish. |
 | `packages/quiz-ui` | **Built and in use by both apps.** `RichText`, `QuestionView` and the Tiptap `RichTextEditor`, 68 tests. The teacher's preview and the student's exam screen are the same component, and so are the prompt editor and the essay answer editor. |
 
 ---
@@ -288,9 +288,20 @@ text nodes) so a client ignoring `prompt_doc` still renders something correct.
 
 Tiptap is configured to a **closed allowlist**, not StarterKit defaults:
 
-- Nodes: `doc, paragraph, text, bulletList, orderedList, listItem, codeBlock, hardBreak`
+- Nodes: `doc, paragraph, text, bulletList, orderedList, listItem, codeBlock, hardBreak, image`
 - Marks: `bold, italic, underline, code`
-- Excluded: images, links, headings, tables, blockquote, horizontal rule
+- Excluded: links, headings, tables, blockquote, horizontal rule
+
+The `image` node is the one nodetype beyond text, and it carries **only an
+opaque `mediaId`** (plus alt text) - never a URL, and its Tiptap extension has
+no `parseHTML`, so an image pasted from the open web maps to nothing. The bytes
+live in Garage (S3-compatible, `docker compose up -d && ./infra/garage/init.sh`)
+and only `apps/api` talks to it: teachers upload through
+`POST /api/quizzes/:id/media` and the editor displays via apps/web's
+same-origin `/api/media/:id` proxy, while the desktop's Rust process fetches
+`GET /api/exam/media/:id` (session-JWT-authed, scoped to the session's quiz) at
+session start and hands the webview data URIs - the webview has no network. A
+failed fetch loses one picture, not the exam.
 
 A Zod schema in `quiz-core` validates the node tree against that allowlist in
 `apps/api` at publish time; unknown nodes or marks are rejected. `quiz-ui`'s
@@ -543,8 +554,11 @@ Implementation notes:
   `getCurrentTeacher()` reads it — one file changes on each side.
 
 Rules the server must own because the client cannot: never send correct answers,
-score server-side only, enforce `expires_at` against the server clock, allow one
-active session per token, make submit idempotent.
+score server-side only, enforce `expires_at` against the server clock, make
+submit idempotent. Deliberately *not* enforced: one active session per token —
+the whole class shares one link, so a second session on the same token is the
+second student, not a conflict. (The desktop still refuses to replace a live
+session on the same device.)
 
 ---
 
