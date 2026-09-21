@@ -27,6 +27,15 @@ describe("validateQuiz", () => {
     expect(codesFor(doc)).toContain("empty_prompt")
   })
 
+  it("flags negative points, which the schema alone cannot catch in-memory", () => {
+    const doc = {
+      ...sampleQuiz(),
+      questions: [{ ...trueFalse("Sky is blue?", true), points: -1 }],
+    }
+    expect(codesFor(doc)).toContain("negative_points")
+    expect(canPublish(doc)).toBe(false)
+  })
+
   describe("single choice", () => {
     it("requires exactly one correct option", () => {
       const none = {

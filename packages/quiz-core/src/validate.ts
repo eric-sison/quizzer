@@ -42,6 +42,14 @@ export function validateQuiz(doc: QuizDoc): Issue[] {
   }
 
   for (const question of doc.questions) {
+    // Belt-and-braces: the zod schema already refuses negative points at every
+    // request boundary, but this validator also runs over in-memory docs in
+    // apps/web, where nothing has parsed the document yet.
+    if (question.points < 0) {
+      issues.push(
+        issue(question.id, "points", "negative_points", "Points cannot be negative.")
+      )
+    }
     issues.push(...validateQuestion(question))
   }
 
