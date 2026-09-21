@@ -1,0 +1,30 @@
+# Local Postgres for apps/api.
+#
+#   docker compose up -d        start
+#   docker compose down         stop, keeping data
+#   docker compose down -v      stop and wipe the volume
+#
+# The published port is 5433, not 5432, so this never collides with a Postgres
+# already running on the host.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: quizzer-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quizzer
+      POSTGRES_PASSWORD: quizzer
+      POSTGRES_DB: quizzer
+    ports:
+      - "5433:5432"
+    volumes:
+      - quizzer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quizzer -d quizzer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  quizzer-pgdata:
