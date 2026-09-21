@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { AnswerLeakError, assertNoAnswerLeak, extractKey, project } from "../project"
+import { richDocSchema } from "../rich-text"
 import { FALSE_ID, TRUE_ID } from "../types/true-false"
 import { multipleChoice, sampleQuiz, singleChoice } from "./fixtures"
 
@@ -53,8 +54,53 @@ describe("project", () => {
       "duration_s",
       "id",
       "questions",
+      "shuffle_questions",
       "title",
     ])
+  })
+
+  it("ships a prompt's image node, carrying only the opaque media id", () => {
+    const doc = sampleQuiz()
+    const first = doc.questions[0]!
+    doc.questions[0] = {
+      ...first,
+      promptDoc: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "What is this?" }] },
+          {
+            type: "image",
+            attrs: {
+              mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b",
+              alt: "A mitochondrion, labelled",
+            },
+          },
+        ],
+      },
+    }
+
+    const manifest = project("quiz-1", doc)
+    const prompt = manifest.questions[0]!.prompt_doc
+    expect(prompt).toBeDefined()
+    expect(prompt!.content[1]).toEqual({
+      type: "image",
+      attrs: {
+        mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b",
+        alt: "A mitochondrion, labelled",
+      },
+    })
+    // The plain-text fallback carries the words, not the picture.
+    expect(manifest.questions[0]!.prompt).toBe("What is this?")
+  })
+
+  it("rejects an image node that smuggles a URL instead of a media id", () => {
+    const parsed = richDocSchema.safeParse({
+      type: "doc",
+      content: [
+        { type: "image", attrs: { src: "https://evil.example/x.png", alt: "" } },
+      ],
+    })
+    expect(parsed.success).toBe(false)
   })
 
   it("omits prompt_doc when plain text loses nothing", () => {

@@ -26,6 +26,7 @@ fn test_app() -> (App<MockRuntime>, WebviewWindow<MockRuntime>) {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::validate_link,
+            commands::preview_link,
             commands::start_session,
             commands::save_answer,
             commands::submit_exam,
@@ -91,6 +92,43 @@ fn validate_link_rejects_a_foreign_origin_with_a_typed_code() {
 }
 
 #[test]
+fn previewing_a_link_shows_the_configuration_but_claims_nothing_and_leaks_nothing() {
+    let (app, window) = test_app();
+
+    let preview = call(&window, "preview_link", json!({ "raw": GOOD_LINK })).expect("should preview");
+
+    assert_eq!(preview["host"], "localhost");
+    assert!(preview["exam"]["title"].as_str().is_some());
+    assert!(preview["exam"]["duration_s"].as_u64().unwrap_or(0) > 0);
+    assert!(preview["exam"]["question_count"].as_u64().unwrap_or(0) > 0);
+    assert!(preview["exam"]["allow_backtracking"].is_boolean());
+    assert!(preview["exam"]["shuffle_questions"].is_boolean());
+
+    // No questions, no credential, no answers - this is configuration only,
+    // pinned as a closed key set so a leaky field cannot ride along unnoticed.
+    let mut keys: Vec<&str> = preview["exam"]
+        .as_object()
+        .expect("exam should be an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "allow_backtracking",
+            "duration_s",
+            "question_count",
+            "shuffle_questions",
+            "title"
+        ]
+    );
+
+    // And nothing was claimed: the student is still idle.
+    assert!(!app.state::<AppState>().session.is_active());
+}
+
+#[test]
 fn a_full_exam_runs_from_link_to_receipt() {
     let (_app, window) = test_app();
 
@@ -134,6 +172,29 @@ fn the_manifest_never_carries_an_answer_key() {
             "manifest leaked `{forbidden}` to the frontend"
         );
     }
+}
+
+#[test]
+fn question_images_reach_the_webview_as_data_uris_never_urls() {
+    let (_app, window) = test_app();
+    let started = call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+
+    // The image is a node inside the prompt document, holding only a media id.
+    let image_node = &started["snapshot"]["manifest"]["questions"][0]["prompt_doc"]["content"][1];
+    assert_eq!(image_node["type"], "image");
+    assert_eq!(image_node["attrs"]["alt"], "A plant cell under a microscope");
+    let media_id = image_node["attrs"]["mediaId"]
+        .as_str()
+        .expect("the fixture's first prompt should carry an image node");
+
+    // The webview has no network access, so the only usable form is inline.
+    let uri = started["snapshot"]["images"][media_id]
+        .as_str()
+        .expect("the image should be inlined into the snapshot");
+    assert!(
+        uri.starts_with("data:image/png;base64,"),
+        "expected a data URI, got {uri}"
+    );
 }
 
 #[test]
@@ -222,6 +283,34 @@ fn each_bad_token_maps_to_its_own_screen() {
 
         assert_eq!(error_code(&err), expected, "wrong code for token {token}");
     }
+}
+
+#[test]
+fn a_mid_exam_revocation_ends_the_session_so_the_student_is_not_typing_into_a_dead_exam() {
+    let (app, window) = test_app();
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+
+    // What the heartbeat loop does when the server says the link is revoked.
+    let state = app.state::<AppState>();
+    commands::end_revoked_session(&state, &window);
+
+    // The session is gone: answering is refused and state reads as idle, which
+    // is also what lets the close/quit guards release the student.
+    let snapshot = call(&window, "get_session_state", json!({})).expect("should read state");
+    assert_eq!(snapshot["phase"], "idle");
+
+    let err = call(
+        &window,
+        "save_answer",
+        json!({ "questionId": "q1", "value": "a" }),
+    )
+    .expect_err("a revoked session must not accept answers");
+    assert_eq!(error_code(&err), "no_session");
+
+    assert!(
+        !app.state::<AppState>().session.is_active(),
+        "the quit and close guards key off is_active, which must now be false"
+    );
 }
 
 #[test]

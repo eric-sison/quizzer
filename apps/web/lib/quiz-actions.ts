@@ -2,7 +2,14 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { quizDocSchema, type Issue, type PublishResponse, type QuizDoc } from "@workspace/quiz-core"
+import {
+  isImageContentType,
+  MAX_IMAGE_BYTES,
+  quizDocSchema,
+  type Issue,
+  type PublishResponse,
+  type QuizDoc,
+} from "@workspace/quiz-core"
 
 import { ApiClientError, quizApi } from "./api-client"
 
@@ -29,6 +36,42 @@ export async function createQuizAction(): Promise<void> {
   revalidatePath("/quizzes")
   // redirect() throws to unwind, so it must sit outside any try/catch.
   redirect(`/quizzes/${quiz.id}/edit`)
+}
+
+export type UploadImageResult =
+  | { ok: true; id: string }
+  | { ok: false; message: string }
+
+/**
+ * Store one question image and hand back its id; the caller writes the id
+ * into the question, where it rides autosave like any other edit. The checks
+ * here are a courtesy for a fast refusal - apps/api enforces the same limits.
+ */
+export async function uploadQuestionImageAction(
+  quizId: string,
+  formData: FormData
+): Promise<UploadImageResult> {
+  const file = formData.get("image")
+  if (!(file instanceof File)) {
+    return { ok: false, message: "Choose an image file to upload." }
+  }
+  if (!isImageContentType(file.type)) {
+    return { ok: false, message: "Images must be PNG, JPEG, WebP or GIF." }
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return {
+      ok: false,
+      message: `Images are limited to ${Math.floor(MAX_IMAGE_BYTES / (1024 * 1024))} MB.`,
+    }
+  }
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const { id } = await quizApi.uploadImage(quizId, file.type, bytes)
+    return { ok: true, id }
+  } catch (error) {
+    return { ok: false, message: describe(error) }
+  }
 }
 
 export async function deleteQuizAction(id: string): Promise<ActionResult> {

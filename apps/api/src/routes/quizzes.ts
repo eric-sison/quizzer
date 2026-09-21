@@ -8,6 +8,7 @@ import { z } from "zod"
 import type { AppEnv } from "../lib/hono"
 import { validate } from "../lib/validate"
 import { requireTeacher } from "../middleware/auth"
+import { readImageForTeacher, uploadQuizImage } from "../services/media"
 import { publishQuiz, unpublishQuiz } from "../services/publish"
 import {
   archiveQuiz,
@@ -18,6 +19,7 @@ import {
 } from "../services/quizzes"
 
 const quizIdParam = z.object({ id: z.uuid() })
+const mediaIdParam = z.object({ id: z.uuid() })
 
 export const quizRoutes = new Hono<AppEnv>()
 
@@ -25,6 +27,7 @@ export const quizRoutes = new Hono<AppEnv>()
 // client, whose session JWT is a different credential entirely.
 quizRoutes.use("/api/quizzes/*", requireTeacher)
 quizRoutes.use("/api/quizzes", requireTeacher)
+quizRoutes.use("/api/media/*", requireTeacher)
 
 quizRoutes.get("/api/quizzes", async (c) => {
   return c.json(await listQuizzes(c.get("teacher").id))
@@ -74,4 +77,36 @@ quizRoutes.delete("/api/quizzes/:id", validate("param", quizIdParam), async (c) 
   const { id } = c.req.valid("param")
   await archiveQuiz(c.get("teacher").id, id)
   return c.body(null, 204)
+})
+
+/**
+ * Upload one question image: raw bytes, typed by the Content-Type header. The
+ * body deliberately never enters JSON - a 5 MB image has no business being
+ * base64'd through a validator.
+ */
+quizRoutes.post(
+  "/api/quizzes/:id/media",
+  validate("param", quizIdParam),
+  async (c) => {
+    const { id } = c.req.valid("param")
+    const contentType = c.req.header("Content-Type") ?? ""
+    const body = new Uint8Array(await c.req.arrayBuffer())
+
+    return c.json(
+      await uploadQuizImage(c.get("teacher").id, id, contentType, body),
+      201
+    )
+  }
+)
+
+/** Stream an image of a quiz this teacher owns; apps/web proxies this route. */
+quizRoutes.get("/api/media/:id", validate("param", mediaIdParam), async (c) => {
+  const { id } = c.req.valid("param")
+  const media = await readImageForTeacher(c.get("teacher").id, id)
+
+  // Media is immutable - a new upload gets a new id - so let it cache.
+  c.header("Cache-Control", "private, max-age=31536000, immutable")
+  c.header("Content-Type", media.contentType)
+  // Copy into an exact-size buffer: the SDK's view may sit inside a larger one.
+  return c.body(new Uint8Array(media.body).buffer as ArrayBuffer)
 })

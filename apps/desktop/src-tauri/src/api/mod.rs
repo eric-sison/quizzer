@@ -45,6 +45,12 @@ pub struct StartSessionRequest {
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct PreviewRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
 pub struct SaveAnswerRequest {
     pub question_id: String,
     pub value: serde_json::Value,
@@ -93,6 +99,21 @@ pub struct StartSessionResponse {
     /// Server's own clock, used to derive skew.
     pub server_time: u64,
     pub expires_at: u64,
+}
+
+/// The exam's configuration, shown on the link-entry screen before the student
+/// commits to lockdown. Serialize as well: it crosses the IPC boundary to the
+/// frontend unchanged. Deliberately no questions and no credential.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewResponse {
+    pub title: String,
+    pub duration_s: u64,
+    #[serde(default)]
+    pub allow_backtracking: bool,
+    #[serde(default)]
+    pub shuffle_questions: bool,
+    #[serde(default)]
+    pub question_count: u32,
 }
 
 #[derive(Debug, Deserialize)]

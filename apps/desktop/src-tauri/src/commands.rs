@@ -6,17 +6,21 @@
 //! affects grading: answers are relayed to the server, which scores them; the
 //! session credential never crosses this boundary in either direction.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WebviewWindow};
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, PreviewResponse};
 use crate::error::{AppError, AppResult};
 use crate::events::{kind, EventQueue};
 use crate::lockdown::{self, LockdownReport};
 use crate::session::{
+    collect_image_ids,
     now_epoch_secs, parse_link, ExamSession, LinkInfo, Receipt, SessionSnapshot, SessionStore,
 };
 
@@ -56,11 +60,11 @@ impl Default for AppState {
 
 /// Event names the frontend subscribes to.
 pub mod event {
-    pub const STATE: &str = "exam://state";
     pub const STRIKE: &str = "exam://strike";
     pub const SUBMITTED: &str = "exam://submitted";
     pub const TIME_UP: &str = "exam://time-up";
     pub const LOCKDOWN: &str = "exam://lockdown";
+    pub const REVOKED: &str = "exam://revoked";
 }
 
 #[derive(Clone, Serialize)]
@@ -89,6 +93,31 @@ pub fn validate_link(raw: String) -> AppResult<LinkInfo> {
     parse_link(&raw).map(|link| link.info())
 }
 
+/// What the frontend shows once a pasted link checks out: where it points plus
+/// the exam's configuration. No questions, no credential - a student reading
+/// this has committed to nothing.
+#[derive(Serialize)]
+pub struct LinkPreview {
+    pub host: String,
+    pub token_preview: String,
+    pub exam: PreviewResponse,
+}
+
+/// Fetch the exam's configuration for a pasted link, before any session is
+/// claimed. The link is validated offline first, so a malicious paste still
+/// never produces a request to an attacker-chosen host.
+#[tauri::command]
+pub async fn preview_link(raw: String, state: State<'_, AppState>) -> AppResult<LinkPreview> {
+    let link = parse_link(&raw)?;
+    let info = link.info();
+    let exam = state.api.preview(link.token).await?;
+    Ok(LinkPreview {
+        host: info.host,
+        token_preview: info.token_preview,
+        exam,
+    })
+}
+
 /// Claim the exam session and enter lockdown.
 ///
 /// Lockdown is engaged only *after* the server confirms the session, so a bad
@@ -110,12 +139,27 @@ pub async fn start_session<R: Runtime>(
     // forward must not be able to shorten or extend their own deadline.
     let clock_skew_s = response.server_time as i64 - now_epoch_secs() as i64;
 
+    // Question images, fetched now over the authenticated channel and handed
+    // to the webview as data URIs - it has no network access of its own. A
+    // failed fetch skips that one picture rather than failing the exam; the
+    // renderer shows the question without it.
+    let mut images: HashMap<String, String> = HashMap::new();
+    for media_id in collect_image_ids(&response.exam) {
+        if let Ok((content_type, bytes)) =
+            state.api.fetch_media(&response.session_jwt, &media_id).await
+        {
+            let uri = format!("data:{};base64,{}", content_type, BASE64.encode(&bytes));
+            images.insert(media_id, uri);
+        }
+    }
+
     state.session.set(ExamSession {
         jwt: response.session_jwt,
         manifest: response.exam,
         expires_at: response.expires_at,
         clock_skew_s,
         answers: Default::default(),
+        images,
         idempotency_key: uuid::Uuid::new_v4().to_string(),
         receipt: None,
         strikes: 0,
@@ -231,6 +275,23 @@ pub async fn do_submit<R: Runtime>(
     let _ = window.emit(event::SUBMITTED, &receipt);
 
     Ok(receipt)
+}
+
+/// A proctor revoked the link mid-exam: the session is over, by a decision made
+/// on the server. Release the lockdown, drop the session (credential included),
+/// and hand the UI its purpose-built screen.
+///
+/// Deliberately does not submit: a revoked link answers every call with 403,
+/// and the server already holds whatever answers were saved before the
+/// revocation. Recording the event is best-effort for the same reason.
+pub fn end_revoked_session<R: Runtime>(state: &AppState, window: &WebviewWindow<R>) {
+    state.events.record(kind::SESSION_REVOKED, None);
+    lockdown::release(window);
+    state.session.clear();
+    // Through Value because emit needs Clone; the shape is AppError's own
+    // serialisation, so the frontend's toAppError reads it unchanged.
+    let payload = serde_json::to_value(AppError::Revoked).unwrap_or_default();
+    let _ = window.emit(event::REVOKED, payload);
 }
 
 /// Record something the frontend noticed (blocked shortcut, context menu,

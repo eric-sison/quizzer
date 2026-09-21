@@ -15,6 +15,7 @@ import { RichTextEditor } from "@workspace/quiz-ui"
 import { QuestionActions } from "@/components/quiz/question-actions"
 import { QuestionTypeSelect } from "@/components/quiz/question-type-select"
 import { SectionHeader } from "@/components/quiz/section-header"
+import { uploadQuestionImageAction } from "@/lib/quiz-actions"
 import { typeDef } from "@/lib/quiz/types/registry"
 
 const MAX_POINTS = 1000
@@ -27,6 +28,7 @@ const MAX_POINTS = 1000
  * keeps a new question type down to one file.
  */
 export function QuestionEditor({
+  quizId,
   question,
   index,
   total,
@@ -35,6 +37,8 @@ export function QuestionEditor({
   onMove,
   onDelete,
 }: {
+  /** For image uploads, which are stored against the quiz. */
+  quizId: string
   question: Question
   index: number
   total: number
@@ -64,12 +68,22 @@ export function QuestionEditor({
       <div className="flex flex-col gap-2.5">
         <SectionHeader
           title="Prompt"
-          hint="Bold, italic, underline, lists and code"
+          hint="Bold, italic, underline, lists, code and images"
         />
         <RichTextEditor
           value={question.promptDoc}
           onChange={(promptDoc) => onChange({ ...question, promptDoc })}
           placeholder="Write the question…"
+          // Images live inside the prompt document as media ids; the editor
+          // displays them through the same-origin proxy, and the upload goes
+          // through a Server Action so the service credential stays put.
+          resolveImageSrc={(mediaId) => `/api/media/${mediaId}`}
+          onUploadImage={async (file) => {
+            const formData = new FormData()
+            formData.set("image", file)
+            const result = await uploadQuestionImageAction(quizId, formData)
+            return result.ok ? { mediaId: result.id } : { error: result.message }
+          }}
           meta={
             <span className="font-mono text-[10px] text-muted-foreground">
               {countWords(question.promptDoc)} words

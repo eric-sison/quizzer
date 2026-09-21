@@ -76,6 +76,34 @@ describe("editor output satisfies richDocSchema", () => {
   })
 })
 
+describe("uploaded images", () => {
+  it("round-trips the schema as a mediaId node, with no URL anywhere", () => {
+    const editor = new Editor({
+      extensions: richTextExtensions({ resolveImageSrc: () => "blob:preview" }),
+      content: "<p>Look at this:</p>",
+    })
+    editor
+      .chain()
+      .insertQuestionImage({
+        mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b",
+        alt: "A phase diagram",
+      })
+      .run()
+    const json = editor.getJSON()
+    editor.destroy()
+
+    const result = richDocSchema.safeParse(json)
+    expect(result.success).toBe(true)
+
+    const serialised = JSON.stringify(json)
+    expect(serialised).toContain('"mediaId":"0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b"')
+    expect(serialised).toContain('"alt":"A phase diagram"')
+    // The resolver's output styles the editor only; it never enters the doc.
+    expect(serialised).not.toContain("blob:preview")
+    expect(serialised).not.toContain("src")
+  })
+})
+
 describe("the editor cannot produce disallowed content", () => {
   it.each([
     ["heading", "<h1>Title</h1>"],

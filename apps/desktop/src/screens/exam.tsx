@@ -98,6 +98,9 @@ export function Exam({
                   value: snapshot.answers[question.id],
                   onChange: (value) => onAnswer(question.id, value),
                 }}
+                // Data URIs Rust fetched at session start; the webview has no
+                // network, so an id missing here renders no image at all.
+                resolveImageSrc={(imageId) => snapshot.images[imageId]}
               />
 
               {unsaved.has(question.id) ? (

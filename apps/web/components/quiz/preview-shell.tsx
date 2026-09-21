@@ -101,6 +101,9 @@ export function PreviewShell({
                 onChange: (value) =>
                   setAnswers((current) => ({ ...current, [question.id]: value })),
               }}
+              // Same-origin proxy to apps/api; the desktop resolves the same
+              // ids to data URIs its Rust process fetched.
+              resolveImageSrc={(imageId) => `/api/media/${imageId}`}
             />
           ) : (
             <Empty>

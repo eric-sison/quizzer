@@ -10,6 +10,15 @@ const envSchema = z.object({
   SERVICE_TOKEN: z.string().min(8),
   /** Signs exam session JWTs. Must differ from any teacher credential. */
   EXAM_JWT_SECRET: z.string().min(16),
+  /**
+   * Garage (S3-compatible) media storage. Only apps/api ever talks to it:
+   * browsers and the desktop client receive media through this API.
+   */
+  S3_ENDPOINT: z.url(),
+  S3_REGION: z.string().min(1).default("garage"),
+  S3_BUCKET: z.string().min(1).default("quizzer-media"),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
 })
 
 export type Env = z.infer<typeof envSchema>

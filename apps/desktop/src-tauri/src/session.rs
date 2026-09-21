@@ -174,6 +174,53 @@ pub struct Question {
     pub max_words: Option<u32>,
 }
 
+/// Media ids referenced by `image` nodes inside the manifest's rich-text
+/// documents. Rust does not interpret rich text - `prompt_doc` is opaque JSON
+/// to it - but it is the only process with network access, so it must find the
+/// ids to fetch. The scan is structural: any `{"type":"image"}` object's
+/// `attrs.mediaId` counts, wherever the node sits.
+pub fn collect_image_ids(manifest: &ExamManifest) -> Vec<String> {
+    fn scan(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    scan(item, out);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                if map.get("type").and_then(|t| t.as_str()) == Some("image") {
+                    if let Some(id) = map
+                        .get("attrs")
+                        .and_then(|attrs| attrs.get("mediaId"))
+                        .and_then(|id| id.as_str())
+                    {
+                        if !out.iter().any(|seen| seen == id) {
+                            out.push(id.to_string());
+                        }
+                    }
+                }
+                for child in map.values() {
+                    scan(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut ids = Vec::new();
+    for question in &manifest.questions {
+        if let Some(doc) = &question.prompt_doc {
+            scan(doc, &mut ids);
+        }
+        for choice in &question.choices {
+            if let Some(doc) = &choice.label_doc {
+                scan(doc, &mut ids);
+            }
+        }
+    }
+    ids
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExamManifest {
     pub id: String,
@@ -182,6 +229,9 @@ pub struct ExamManifest {
     pub questions: Vec<Question>,
     #[serde(default)]
     pub allow_backtracking: bool,
+    /// Defaulted so manifests published before the field existed still parse.
+    #[serde(default)]
+    pub shuffle_questions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +266,11 @@ pub struct ExamSession {
     pub clock_skew_s: i64,
     /// Local echo of what's been saved, used to re-render on resume.
     pub answers: HashMap<String, serde_json::Value>,
+    /// Question images fetched over the authenticated channel at session
+    /// start, keyed by `image_id`, as data URIs the webview can render without
+    /// network access. A fetch that failed simply has no entry: the student
+    /// loses one picture, not the exam.
+    pub images: HashMap<String, String>,
     /// Stable across retries so the server can dedupe a double submit.
     pub idempotency_key: String,
     pub receipt: Option<Receipt>,
@@ -243,6 +298,8 @@ pub struct SessionSnapshot {
     pub phase: Phase,
     pub manifest: Option<ExamManifest>,
     pub answers: HashMap<String, serde_json::Value>,
+    /// `image_id` → data URI. The webview's only source of question images.
+    pub images: HashMap<String, String>,
     pub remaining_s: u64,
     pub strikes: u32,
     pub receipt: Option<Receipt>,
@@ -254,6 +311,7 @@ impl SessionSnapshot {
             phase: Phase::Idle,
             manifest: None,
             answers: HashMap::new(),
+            images: HashMap::new(),
             remaining_s: 0,
             strikes: 0,
             receipt: None,
@@ -285,6 +343,7 @@ impl SessionStore {
                 phase: s.phase(),
                 manifest: Some(s.manifest.clone()),
                 answers: s.answers.clone(),
+                images: s.images.clone(),
                 remaining_s: s.remaining_s(),
                 strikes: s.strikes,
                 receipt: s.receipt.clone(),
@@ -307,7 +366,6 @@ impl SessionStore {
 
     /// Drop the session entirely. Used when a proctor revokes an in-flight
     /// exam; kept on the store so that path doesn't have to reach inside.
-    #[allow(dead_code)]
     pub fn clear(&self) {
         *self.inner.lock().expect("session mutex poisoned") = None;
     }

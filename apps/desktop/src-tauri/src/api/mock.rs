@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::{HeartbeatResponse, ProctorEvent, StartSessionResponse, SubmitResponse};
+use super::{
+    HeartbeatResponse, PreviewResponse, ProctorEvent, StartSessionResponse, SubmitResponse,
+};
 use crate::error::{AppError, AppResult};
 use crate::session::{
     now_epoch_secs, Choice, ExamManifest, Question, QuestionKind, Receipt,
@@ -29,6 +31,17 @@ const TOKEN_SHORT: &str = "mockexamtoken000000007";
 
 const MOCK_JWT: &str = "mock-session-jwt";
 const DEFAULT_DURATION_S: u64 = 45 * 60;
+
+/// The one image the fixture exam references, on its first question.
+pub const MOCK_IMAGE_ID: &str = "00000000-0000-4000-8000-00000000img1";
+/// 1x1 transparent PNG, so the media path is exercised without shipping a file.
+const MOCK_IMAGE_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xB5,
+    0x1C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x60,
+    0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x05, 0x00, 0x01, 0x87, 0xA1, 0x4E, 0xD4, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
 
 #[derive(Default)]
 struct MockState {
@@ -55,24 +68,40 @@ impl ApiClient {
         tokio::time::sleep(Duration::from_millis(350)).await;
     }
 
+    /// Every way a link can be dead, shared by preview and session claim so
+    /// the fixture can never disagree with itself the way the real backend
+    /// (which shares its resolution too) never will.
+    fn resolve(token: &str) -> AppResult<u64> {
+        match token {
+            TOKEN_EXPIRED => Err(AppError::Expired),
+            TOKEN_SUBMITTED => Err(AppError::AlreadySubmitted),
+            TOKEN_NOT_OPEN => Err(AppError::NotYetOpen),
+            TOKEN_REVOKED => Err(AppError::Revoked),
+            TOKEN_OFFLINE => Err(AppError::NetworkUnavailable),
+            TOKEN_SHORT => Ok(120),
+            TOKEN_OK => Ok(DEFAULT_DURATION_S),
+            _ => Err(AppError::InvalidLink),
+        }
+    }
+
+    pub async fn preview(&self, token: String) -> AppResult<PreviewResponse> {
+        Self::latency().await;
+        let duration_s = Self::resolve(&token)?;
+        let exam = fixture_exam(duration_s);
+        Ok(PreviewResponse {
+            title: exam.title,
+            duration_s,
+            allow_backtracking: exam.allow_backtracking,
+            shuffle_questions: exam.shuffle_questions,
+            question_count: exam.questions.len() as u32,
+        })
+    }
+
     pub async fn start_session(&self, token: String) -> AppResult<StartSessionResponse> {
         Self::latency().await;
 
-        match token.as_str() {
-            TOKEN_EXPIRED => return Err(AppError::Expired),
-            TOKEN_SUBMITTED => return Err(AppError::AlreadySubmitted),
-            TOKEN_NOT_OPEN => return Err(AppError::NotYetOpen),
-            TOKEN_REVOKED => return Err(AppError::Revoked),
-            TOKEN_OFFLINE => return Err(AppError::NetworkUnavailable),
-            TOKEN_OK | TOKEN_SHORT => {}
-            _ => return Err(AppError::InvalidLink),
-        }
+        let duration_s = Self::resolve(&token)?;
 
-        let duration_s = if token == TOKEN_SHORT {
-            120
-        } else {
-            DEFAULT_DURATION_S
-        };
         let now = now_epoch_secs();
         let expires_at = now + duration_s;
 
@@ -90,6 +119,15 @@ impl ApiClient {
             server_time: now,
             expires_at,
         })
+    }
+
+    pub async fn fetch_media(&self, _jwt: &str, media_id: &str) -> AppResult<(String, Vec<u8>)> {
+        Self::latency().await;
+        if media_id == MOCK_IMAGE_ID {
+            Ok(("image/png".to_string(), MOCK_IMAGE_PNG.to_vec()))
+        } else {
+            Err(AppError::ServerError)
+        }
     }
 
     pub async fn save_answer(
@@ -186,19 +224,37 @@ fn fixture_exam(duration_s: u64) -> ExamManifest {
         title: "Introduction to Photosynthesis".to_string(),
         duration_s,
         allow_backtracking: true,
+        shuffle_questions: false,
         questions: vec![
-            question(
-                "q1",
-                QuestionKind::SingleChoice,
-                "Which organelle is primarily responsible for photosynthesis?",
-                vec![
-                    choice("a", "Mitochondrion"),
-                    choice("b", "Chloroplast"),
-                    choice("c", "Ribosome"),
-                    choice("d", "Golgi apparatus"),
-                ],
-                2,
-            ),
+            Question {
+                // The image travels inside the prompt document, as the real
+                // backend ships it: an `image` node holding only a media id.
+                prompt_doc: Some(serde_json::json!({
+                    "type": "doc",
+                    "content": [
+                        { "type": "paragraph", "content": [{
+                            "type": "text",
+                            "text": "Which organelle is primarily responsible for photosynthesis?"
+                        }]},
+                        { "type": "image", "attrs": {
+                            "mediaId": MOCK_IMAGE_ID,
+                            "alt": "A plant cell under a microscope"
+                        }}
+                    ]
+                })),
+                ..question(
+                    "q1",
+                    QuestionKind::SingleChoice,
+                    "Which organelle is primarily responsible for photosynthesis?",
+                    vec![
+                        choice("a", "Mitochondrion"),
+                        choice("b", "Chloroplast"),
+                        choice("c", "Ribosome"),
+                        choice("d", "Golgi apparatus"),
+                    ],
+                    2,
+                )
+            },
             question(
                 "q2",
                 QuestionKind::TrueFalse,

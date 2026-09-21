@@ -72,11 +72,29 @@ const richOrderedListSchema = z.strictObject({
   content: z.array(richListItemSchema),
 })
 
+/**
+ * An image, by opaque media id - never a URL. The id is minted by the API's
+ * upload endpoint and resolved by each client against the one origin it
+ * already trusts (the web app through its proxy route, the desktop through its
+ * pinned origin), so a document cannot point a student's client anywhere. This
+ * is the one nodetype beyond text the allowlist admits, and only as a block:
+ * no inline images inside sentences, lists or code.
+ */
+const richImageSchema = z.strictObject({
+  type: z.literal("image"),
+  attrs: z.strictObject({
+    mediaId: z.uuid(),
+    /** What the picture shows, for students using a screen reader. */
+    alt: z.string().max(300).default(""),
+  }),
+})
+
 const richBlockSchema = z.discriminatedUnion("type", [
   richParagraphSchema,
   richCodeBlockSchema,
   richBulletListSchema,
   richOrderedListSchema,
+  richImageSchema,
 ])
 
 export const richDocSchema = z.strictObject({
@@ -89,6 +107,7 @@ export type RichTextNode = z.infer<typeof richTextNodeSchema>
 export type RichInline = z.infer<typeof richInlineSchema>
 export type RichParagraph = z.infer<typeof richParagraphSchema>
 export type RichListItem = z.infer<typeof richListItemSchema>
+export type RichImage = z.infer<typeof richImageSchema>
 export type RichBlock = z.infer<typeof richBlockSchema>
 export type RichDoc = z.infer<typeof richDocSchema>
 
@@ -126,6 +145,10 @@ function blockToText(block: RichBlock): string {
       return block.content
         .map((item) => item.content.map((p) => inlineToText(p.content)).join("\n"))
         .join("\n")
+    case "image":
+      // Not text: the plain fallback simply has no picture, and a prompt that
+      // is only an image still needs words (isRichDocEmpty stays true).
+      return ""
   }
 }
 
@@ -136,7 +159,12 @@ function blockToText(block: RichBlock): string {
  * that does not understand the rich format still renders something correct.
  */
 export function toPlainText(doc: RichDoc): string {
-  return doc.content.map(blockToText).join("\n")
+  // Images are not text: they contribute nothing, not even a blank line, and a
+  // prompt that is only an image still counts as empty (it needs words).
+  return doc.content
+    .filter((block) => block.type !== "image")
+    .map(blockToText)
+    .join("\n")
 }
 
 /** True when a document holds no visible text. */

@@ -196,6 +196,24 @@ export const proctorEvents = pgTable(
   (t) => [uniqueIndex("proctor_events_session_seq_idx").on(t.sessionId, t.seq)]
 )
 
+/**
+ * One row per uploaded question image. The bytes live in Garage under the
+ * row's id; this table is what ties an opaque media id to the quiz that may
+ * serve it, on both the teacher surface and the exam surface.
+ */
+export const quizMedia = pgTable("quiz_media", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  quizId: uuid("quiz_id")
+    .notNull()
+    .references(() => quizzes.id, { onDelete: "cascade" }),
+  uploadedBy: uuid("uploaded_by")
+    .notNull()
+    .references(() => teachers.id, { onDelete: "cascade" }),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  createdAt,
+})
+
 export type TeacherRow = typeof teachers.$inferSelect
 export type QuizRow = typeof quizzes.$inferSelect
 export type QuizVersionRow = typeof quizVersions.$inferSelect

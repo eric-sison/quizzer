@@ -5,7 +5,13 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { createOption, createQuestion, type Question } from "@workspace/quiz-core"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+// The image field reaches for a Server Action, whose module imports
+// `server-only`; in this client-side test the action is a stub.
+vi.mock("@/lib/quiz-actions", () => ({
+  uploadQuestionImageAction: vi.fn(async () => ({ ok: false, message: "stubbed" })),
+}))
 
 import { QuestionEditor } from "./question-editor"
 
@@ -28,6 +34,7 @@ async function mount(question: Question, onChange: (q: Question) => void = () =>
   await act(async () => {
     root.render(
       <QuestionEditor
+        quizId="quiz-1"
         question={question}
         index={0}
         total={3}

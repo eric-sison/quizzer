@@ -1,14 +1,14 @@
 {
   "session_jwt": "<redacted: a real session token is not a fixture>",
   "exam": {
-    "id": "9d70e61a-1219-4c94-9b80-b7e55fc2a58b",
-    "title": "Contract fixture",
+    "id": "acc86bf6-9543-40a7-b0a5-dbc28c44eeca",
+    "title": "Image Quiz",
     "questions": [
       {
-        "id": "q1",
+        "id": "00000000-0000-4000-8000-00000000q001",
         "kind": "true_false",
         "points": 1,
-        "prompt": "Water boils at 100C.",
+        "prompt": "The sky is blue.",
         "choices": [
           {
             "id": "true",
@@ -22,17 +22,17 @@
         "required": true
       },
       {
-        "id": "q2",
+        "id": "00000000-0000-4000-8000-00000000q002",
         "kind": "single_choice",
         "points": 2,
-        "prompt": "Which is prime?",
+        "prompt": "Pick the prime.",
         "choices": [
           {
-            "id": "o1",
+            "id": "00000000-0000-4000-8000-00000000o001",
             "label": "7"
           },
           {
-            "id": "o2",
+            "id": "00000000-0000-4000-8000-00000000o002",
             "label": "9"
           }
         ],
@@ -44,9 +44,8 @@
               "type": "paragraph",
               "content": [
                 {
-                  "text": "Which is ",
-                  "type": "text",
-                  "marks": []
+                  "text": "Pick the ",
+                  "type": "text"
                 },
                 {
                   "text": "prime",
@@ -58,49 +57,57 @@
                   ]
                 },
                 {
-                  "text": "?",
+                  "text": ".",
                   "type": "text"
                 }
               ]
+            },
+            {
+              "type": "image",
+              "attrs": {
+                "alt": "A number line from 1 to 20 with primes circled",
+                "mediaId": "a41a4e67-35ac-4203-9c0f-a73edc01fc63"
+              }
             }
           ]
         }
       },
       {
-        "id": "q3",
+        "id": "00000000-0000-4000-8000-00000000q003",
         "kind": "multiple_choice",
         "points": 3,
-        "prompt": "Pick the primes.",
+        "prompt": "Pick all primes.",
         "choices": [
           {
-            "id": "o3",
+            "id": "00000000-0000-4000-8000-00000000o003",
             "label": "7"
           },
           {
-            "id": "o4",
+            "id": "00000000-0000-4000-8000-00000000o004",
             "label": "9"
           },
           {
-            "id": "o5",
+            "id": "00000000-0000-4000-8000-00000000o005",
             "label": "13"
           }
         ],
-        "required": false
+        "required": true
       },
       {
-        "id": "q4",
+        "id": "00000000-0000-4000-8000-00000000q004",
         "kind": "essay",
-        "points": 4,
-        "prompt": "Explain photosynthesis.",
+        "points": 5,
+        "prompt": "Explain primality.",
         "choices": [],
         "required": true,
         "max_words": 200,
         "min_words": 20
       }
     ],
-    "duration_s": 1800,
+    "duration_s": 600,
+    "shuffle_questions": false,
     "allow_backtracking": true
   },
-  "server_time": 1790015288,
-  "expires_at": 1790017088
+  "server_time": 1790022173,
+  "expires_at": 1790022773
 }

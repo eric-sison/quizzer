@@ -8,9 +8,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{
-    ApiErrorBody, EventBatchRequest, HeartbeatRequest, HeartbeatResponse, ProctorEvent,
-    SaveAnswerRequest, StartSessionRequest, StartSessionResponse, SubmitRequest, SubmitResponse,
-    CLIENT_VERSION,
+    ApiErrorBody, EventBatchRequest, HeartbeatRequest, HeartbeatResponse, PreviewRequest,
+    PreviewResponse, ProctorEvent, SaveAnswerRequest, StartSessionRequest, StartSessionResponse,
+    SubmitRequest, SubmitResponse, CLIENT_VERSION,
 };
 use crate::error::{AppError, AppResult};
 use crate::session::API_ORIGIN;
@@ -57,6 +57,11 @@ impl ApiClient {
         decode(req.send().await?).await
     }
 
+    pub async fn preview(&self, token: String) -> AppResult<PreviewResponse> {
+        self.post("/api/exam/preview", None, &PreviewRequest { token })
+            .await
+    }
+
     pub async fn start_session(&self, token: String) -> AppResult<StartSessionResponse> {
         let body = StartSessionRequest {
             token,
@@ -92,6 +97,36 @@ impl ApiClient {
             .post("/api/exam/events", Some(jwt), &EventBatchRequest { events })
             .await?;
         Ok(())
+    }
+
+    /// One question image, over the same authenticated channel as everything
+    /// else. Returns the content type and the raw bytes; the caller turns them
+    /// into a data URI for the network-less webview.
+    pub async fn fetch_media(&self, jwt: &str, media_id: &str) -> AppResult<(String, Vec<u8>)> {
+        let res = self
+            .http
+            .get(Self::url(&format!("/api/exam/media/{media_id}")))
+            .bearer_auth(jwt)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            // Delegate to the shared error mapping; a failure status never
+            // comes back Ok from it.
+            return match decode::<serde_json::Value>(res).await {
+                Ok(_) => Err(AppError::ServerError),
+                Err(err) => Err(err),
+            };
+        }
+
+        let content_type = res
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = res.bytes().await?.to_vec();
+        Ok((content_type, bytes))
     }
 
     pub async fn submit(&self, jwt: &str, idempotency_key: String) -> AppResult<SubmitResponse> {

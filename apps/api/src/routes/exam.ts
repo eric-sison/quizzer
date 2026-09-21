@@ -13,6 +13,7 @@
 import {
   eventBatchRequestSchema,
   heartbeatRequestSchema,
+  previewExamRequestSchema,
   saveAnswerRequestSchema,
   startSessionRequestSchema,
   submitRequestSchema,
@@ -22,9 +23,31 @@ import { Hono } from "hono"
 import type { ExamEnv } from "../lib/hono"
 import { validate } from "../lib/validate"
 import { assertWritable, requireExamSession } from "../middleware/exam-auth"
-import { heartbeat, recordEvents, saveAnswer, startSession, submit } from "../services/exam"
+import { z } from "zod"
+
+import {
+  heartbeat,
+  previewExam,
+  recordEvents,
+  saveAnswer,
+  startSession,
+  submit,
+} from "../services/exam"
+import { readImageForSession } from "../services/media"
 
 export const examRoutes = new Hono<ExamEnv>()
+
+/**
+ * Pre-flight configuration for the link-entry screen: title, time limit,
+ * backtracking, shuffle, question count. Token-authorised like the session
+ * claim, but claims nothing - no session row, no credential, and above all no
+ * questions.
+ */
+examRoutes.post(
+  "/api/exam/preview",
+  validate("json", previewExamRequestSchema),
+  async (c) => c.json(await previewExam(c.req.valid("json").token))
+)
 
 /**
  * The one exam route without a credential: it is where the credential comes
@@ -45,6 +68,25 @@ examRoutes.use("/api/exam/answer", requireExamSession)
 examRoutes.use("/api/exam/heartbeat", requireExamSession)
 examRoutes.use("/api/exam/events", requireExamSession)
 examRoutes.use("/api/exam/submit", requireExamSession)
+examRoutes.use("/api/exam/media/*", requireExamSession)
+
+/**
+ * Question images, for the desktop's Rust process - the webview has no network
+ * access, so Rust fetches these at session start and hands the UI data URIs.
+ * Scoped to the session's pinned version: one exam cannot read another's media.
+ */
+examRoutes.get(
+  "/api/exam/media/:id",
+  validate("param", z.object({ id: z.uuid() })),
+  async (c) => {
+    const { id } = c.req.valid("param")
+    const media = await readImageForSession(c.get("session").versionId, id)
+
+    c.header("Cache-Control", "private, max-age=3600")
+    c.header("Content-Type", media.contentType)
+    return c.body(new Uint8Array(media.body).buffer as ArrayBuffer)
+  }
+)
 
 examRoutes.post(
   "/api/exam/answer",

@@ -11,7 +11,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 import type {
   AnswerValue,
+  AppError,
   LinkInfo,
+  LinkPreview,
   LockdownReport,
   Receipt,
   SessionSnapshot,
@@ -22,6 +24,15 @@ import type {
 /** Offline sanity-check of a pasted link. Never touches the network. */
 export function validateLink(raw: string): Promise<LinkInfo> {
   return invoke<LinkInfo>("validate_link", { raw })
+}
+
+/**
+ * Fetch a valid link's exam configuration (time limit, backtracking, shuffle,
+ * question count) without claiming a session. Rust validates the link offline
+ * before anything is sent.
+ */
+export function previewLink(raw: string): Promise<LinkPreview> {
+  return invoke<LinkPreview>("preview_link", { raw })
 }
 
 /** Claim the session and enter lockdown. */
@@ -84,11 +95,11 @@ export function installGuardBridge(): void {
 // --- events emitted by Rust -------------------------------------------------
 
 export const EXAM_EVENT = {
-  state: "exam://state",
   strike: "exam://strike",
   submitted: "exam://submitted",
   timeUp: "exam://time-up",
   lockdown: "exam://lockdown",
+  revoked: "exam://revoked",
 } as const
 
 export function onStrike(
@@ -111,4 +122,11 @@ export function onLockdown(
   handler: (report: LockdownReport) => void
 ): Promise<UnlistenFn> {
   return listen<LockdownReport>(EXAM_EVENT.lockdown, (e) => handler(e.payload))
+}
+
+/** The proctor revoked the link mid-exam; Rust has already ended the session. */
+export function onRevoked(
+  handler: (error: AppError) => void
+): Promise<UnlistenFn> {
+  return listen<AppError>(EXAM_EVENT.revoked, (e) => handler(e.payload))
 }

@@ -6,6 +6,7 @@ import {
   quizDetailSchema,
   quizSummarySchema,
   saveDraftResponseSchema,
+  uploadMediaResponseSchema,
   type ApiErrorCode,
   type Issue,
   type PublishResponse,
@@ -13,6 +14,7 @@ import {
   type QuizDoc,
   type QuizSummary,
   type SaveDraftResponse,
+  type UploadMediaResponse,
 } from "@workspace/quiz-core"
 import { z } from "zod"
 
@@ -155,5 +157,62 @@ export const quizApi = {
 
   unpublish(id: string): Promise<void> {
     return request(`/api/quizzes/${id}/unpublish`, { method: "POST" })
+  },
+
+  /** Raw bytes, not JSON: an image has no business being base64'd. */
+  async uploadImage(
+    quizId: string,
+    contentType: string,
+    body: Uint8Array
+  ): Promise<UploadMediaResponse> {
+    const teacher = await getCurrentTeacher()
+
+    let response: Response
+    try {
+      response = await fetch(`${env.API_ORIGIN}/api/quizzes/${quizId}/media`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.SERVICE_TOKEN}`,
+          "X-Teacher-Id": teacher.id,
+          "Content-Type": contentType,
+        },
+        body: body as BodyInit,
+        cache: "no-store",
+      })
+    } catch {
+      throw new ApiClientError(
+        "network_unavailable",
+        0,
+        "Could not reach the quiz service.",
+        undefined
+      )
+    }
+
+    if (!response.ok) throw await toClientError(response)
+
+    const parsed = uploadMediaResponseSchema.safeParse(await response.json())
+    if (!parsed.success) {
+      throw new ApiClientError(
+        "server_error",
+        response.status,
+        "The quiz service returned an unexpected shape for the upload."
+      )
+    }
+    return parsed.data
+  },
+
+  /**
+   * The raw upstream response for an image, for the media proxy route to
+   * stream on - never parsed here, because the body is not ours to interpret.
+   */
+  async imageResponse(mediaId: string): Promise<Response> {
+    const teacher = await getCurrentTeacher()
+    return fetch(`${env.API_ORIGIN}/api/media/${mediaId}`, {
+      headers: {
+        Authorization: `Bearer ${env.SERVICE_TOKEN}`,
+        "X-Teacher-Id": teacher.id,
+      },
+      cache: "no-store",
+    })
   },
 }

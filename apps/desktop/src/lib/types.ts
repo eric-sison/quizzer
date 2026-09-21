@@ -37,6 +37,8 @@ export type SessionSnapshot = {
   phase: Phase
   manifest: import("@workspace/quiz-core").ExamManifest | null
   answers: Record<string, import("@workspace/quiz-core").AnswerValue>
+  /** `image_id` → data URI, fetched by Rust; the webview has no network. */
+  images: Record<string, string>
   remaining_s: number
   strikes: number
   receipt: Receipt | null
@@ -45,6 +47,19 @@ export type SessionSnapshot = {
 export type LinkInfo = {
   host: string
   token_preview: string
+}
+
+/** The exam's configuration, fetched before any session is claimed. */
+export type LinkPreview = {
+  host: string
+  token_preview: string
+  exam: {
+    title: string
+    duration_s: number
+    allow_backtracking: boolean
+    shuffle_questions: boolean
+    question_count: number
+  }
 }
 
 export type LockdownReport = {

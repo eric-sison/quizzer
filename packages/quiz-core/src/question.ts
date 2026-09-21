@@ -24,6 +24,7 @@ export type QuestionKind = (typeof QUESTION_KINDS)[number]
 
 const baseQuestionFields = {
   id: z.string().min(1).max(64),
+  // May carry image nodes, referenced by opaque media id - see rich-text.ts.
   promptDoc: richDocSchema,
   points: z.number().int().min(0).max(1000),
   required: z.boolean(),

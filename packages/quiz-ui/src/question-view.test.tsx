@@ -147,6 +147,65 @@ describe("the shared question header", () => {
   })
 })
 
+describe("question images", () => {
+  const IMAGE_ID = "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b"
+
+  function withImage(): Question {
+    return {
+      ...trueFalse(),
+      promptDoc: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Water boils at 100C." }],
+          },
+          { type: "image", attrs: { mediaId: IMAGE_ID, alt: "A phase diagram" } },
+        ],
+      },
+    }
+  }
+
+  async function showWithResolver(
+    question: ManifestQuestion,
+    resolveImageSrc?: (id: string) => string | undefined
+  ) {
+    await act(async () => {
+      root.render(
+        <QuestionView
+          question={question}
+          index={0}
+          total={1}
+          answer={{}}
+          resolveImageSrc={resolveImageSrc}
+        />
+      )
+    })
+  }
+
+  it("renders the image through the caller's resolver, with its alt text", async () => {
+    await showWithResolver(projected(withImage()), (id) => `/api/media/${id}`)
+
+    const img = container.querySelector("img")
+    expect(img?.getAttribute("src")).toBe(`/api/media/${IMAGE_ID}`)
+    expect(img?.getAttribute("alt")).toBe("A phase diagram")
+  })
+
+  it("renders no image at all when the resolver cannot place the id", async () => {
+    // Better a question without its picture than a broken image frame mid-exam.
+    await showWithResolver(projected(withImage()), () => undefined)
+    expect(container.querySelector("img")).toBeNull()
+  })
+
+  it("renders no image without a resolver, and none for a question without one", async () => {
+    await showWithResolver(projected(withImage()))
+    expect(container.querySelector("img")).toBeNull()
+
+    await showWithResolver(projected(trueFalse()), () => "/never-asked")
+    expect(container.querySelector("img")).toBeNull()
+  })
+})
+
 describe("the control follows the question kind", () => {
   it("gives true/false two radios labelled True and False", async () => {
     await show(projected(trueFalse()))

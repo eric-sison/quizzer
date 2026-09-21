@@ -1,0 +1,26 @@
+# Single-node Garage for local development. Nothing but apps/api talks to it:
+# the teacher's browser and the desktop client both receive media through the
+# API, so this port never needs to be reachable by anything else.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# Dev-only secret; a real deployment generates its own.
+rpc_secret = "b597bbc4c6c4d3fbb1b1a7010b5d9d6bfeb372c9a800db4d5a5fa2500b2fb53e"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"

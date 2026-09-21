@@ -25,11 +25,19 @@ import type {
 export function RichText({
   doc,
   fallback,
+  resolveImageSrc,
 }: {
   /** Absent when the projection decided the plain text lost nothing. */
   doc: RichDoc | undefined
   /** Plain text, always populated on a manifest question. */
   fallback?: string
+  /**
+   * Turns an image node's opaque `mediaId` into something an <img> can load -
+   * the web app hands back its proxy route, the desktop a data URI its Rust
+   * process fetched. Absent or returning undefined, the image renders as
+   * nothing: better a missing picture than a broken frame mid-exam.
+   */
+  resolveImageSrc?: (mediaId: string) => string | undefined
 }) {
   if (!doc) {
     return fallback ? <Fallback text={fallback} /> : null
@@ -38,7 +46,7 @@ export function RichText({
   return (
     <>
       {doc.content.map((block, i) => (
-        <Block key={i} block={block} />
+        <Block key={i} block={block} resolveImageSrc={resolveImageSrc} />
       ))}
     </>
   )
@@ -57,7 +65,13 @@ function Fallback({ text }: { text: string }) {
   )
 }
 
-function Block({ block }: { block: RichBlock }) {
+function Block({
+  block,
+  resolveImageSrc,
+}: {
+  block: RichBlock
+  resolveImageSrc?: (mediaId: string) => string | undefined
+}) {
   switch (block.type) {
     case "paragraph":
       return (
@@ -89,6 +103,21 @@ function Block({ block }: { block: RichBlock }) {
           <Items items={block.content} />
         </ol>
       )
+
+    case "image": {
+      // The node carries an opaque media id, never a URL; the src below comes
+      // only from the caller's resolver, so quiz content still cannot point an
+      // <img> anywhere on its own.
+      const src = resolveImageSrc?.(block.attrs.mediaId)
+      if (src === undefined) return null
+      return (
+        <img
+          src={src}
+          alt={block.attrs.alt}
+          className="my-1 max-h-80 w-fit max-w-full rounded-lg border object-contain"
+        />
+      )
+    }
 
     default:
       // Unreachable for a document that passed quiz-core's schema, which is

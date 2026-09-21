@@ -29,12 +29,21 @@ export function QuestionView({
   index,
   total,
   answer,
+  resolveImageSrc,
 }: {
   question: ManifestQuestion
   /** Zero-based. */
   index: number
   total: number
   answer: AnswerControls
+  /**
+   * Turns a prompt image node's opaque `mediaId` into something an <img> can
+   * load. The one other per-app part besides `answer`: the web preview
+   * resolves through its same-origin proxy route, the desktop hands back a
+   * data URI its Rust process fetched (the webview has no network). Omitted,
+   * images render as nothing rather than as broken frames.
+   */
+  resolveImageSrc?: (mediaId: string) => string | undefined
 }) {
   return (
     <section aria-labelledby={`question-${question.id}-heading`} className="flex flex-col gap-5">
@@ -60,7 +69,11 @@ export function QuestionView({
       {/* `prompt` is populated on every question, so a prompt whose formatting
           was not worth shipping still renders. */}
       <div className="flex flex-col gap-3 text-base text-foreground">
-        <RichText doc={question.prompt_doc} fallback={question.prompt} />
+        <RichText
+          doc={question.prompt_doc}
+          fallback={question.prompt}
+          resolveImageSrc={resolveImageSrc}
+        />
       </div>
 
       <AnswerSection question={question} answer={answer} />
