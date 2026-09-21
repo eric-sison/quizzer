@@ -5,20 +5,27 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "env": ["API_ORIGIN", "SERVICE_TOKEN", "PUBLIC_API_ORIGIN", "DATABASE_URL", "EXAM_JWT_SECRET", "PORT", "NODE_ENV", "TAURI_DEV_HOST"],
       "outputs": [".next/**", "!.next/cache/**"]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": ["^lint"],
+      "env": ["API_ORIGIN", "SERVICE_TOKEN", "PUBLIC_API_ORIGIN", "DATABASE_URL", "EXAM_JWT_SECRET", "PORT", "NODE_ENV", "TAURI_DEV_HOST"]
     },
     "format": {
       "dependsOn": ["^format"]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"]
+      "dependsOn": ["^typecheck"],
+      "env": ["API_ORIGIN", "SERVICE_TOKEN", "PUBLIC_API_ORIGIN", "DATABASE_URL", "EXAM_JWT_SECRET", "PORT", "NODE_ENV", "TAURI_DEV_HOST"]
     },
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "test": {
+      "dependsOn": ["^test"],
+      "outputs": []
     }
   }
 }
