@@ -8,7 +8,17 @@ import {
   MAX_IMAGE_BYTES,
   type RichDoc,
 } from "@workspace/quiz-core"
-import { Bold, Code, ImagePlus, Italic, List, ListOrdered, Loader2, Underline } from "lucide-react"
+import {
+  Bold,
+  Code,
+  ImagePlus,
+  Images,
+  Italic,
+  List,
+  ListOrdered,
+  Loader2,
+  Underline,
+} from "lucide-react"
 import { Input } from "@workspace/ui/components/input"
 import { Separator } from "@workspace/ui/components/separator"
 import { Toggle } from "@workspace/ui/components/toggle"
@@ -35,6 +45,13 @@ type RichTextEditorProps = {
    * editor does not, so a student cannot upload anything.
    */
   onUploadImage?: (file: File) => Promise<UploadImageResult>
+  /**
+   * Open the app's picker over already-uploaded media; resolve with a chosen
+   * id or null on cancel. Only rendered alongside `onUploadImage` - the same
+   * teacher-only gate. quiz-ui stays app-agnostic: it awaits a promise and
+   * never learns where the list came from.
+   */
+  onPickImage?: () => Promise<{ mediaId: string } | null>
 }
 
 /**
@@ -70,6 +87,7 @@ export function RichTextEditor({
   editable = true,
   resolveImageSrc,
   onUploadImage,
+  onPickImage,
 }: RichTextEditorProps) {
   const [uploadError, setUploadError] = React.useState<string | null>(null)
 
@@ -110,6 +128,7 @@ export function RichTextEditor({
         editor={editor}
         meta={meta}
         onUploadImage={onUploadImage}
+        onPickImage={onPickImage}
         onUploadError={setUploadError}
       />
       <EditorContent editor={editor} />
@@ -126,11 +145,13 @@ function Toolbar({
   editor,
   meta,
   onUploadImage,
+  onPickImage,
   onUploadError,
 }: {
   editor: Editor
   meta?: React.ReactNode
   onUploadImage?: (file: File) => Promise<UploadImageResult>
+  onPickImage?: () => Promise<{ mediaId: string } | null>
   onUploadError: (message: string | null) => void
 }) {
   // ProseMirror state changes outside React, so subscribe to force re-renders
@@ -203,6 +224,27 @@ function Toolbar({
             onUploadImage={onUploadImage}
             onUploadError={onUploadError}
           />
+          {onPickImage ? (
+            <Toggle
+              size="sm"
+              aria-label="Insert existing image"
+              title="Insert existing image"
+              pressed={false}
+              onPressedChange={() => {
+                void onPickImage().then((picked) => {
+                  if (picked) {
+                    editor
+                      .chain()
+                      .focus()
+                      .insertQuestionImage({ mediaId: picked.mediaId, alt: "" })
+                      .run()
+                  }
+                })
+              }}
+            >
+              <Images className="size-3.5" />
+            </Toggle>
+          ) : null}
           {editor.isActive("image") ? <ImageAltInput editor={editor} /> : null}
         </>
       ) : null}

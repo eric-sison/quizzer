@@ -94,3 +94,68 @@ describe("RichTextEditor", () => {
     expect(JSON.stringify(last)).toContain("bulletList")
   })
 })
+
+describe("the existing-image picker", () => {
+  async function mountWith(
+    onChange: (doc: RichDoc) => void,
+    onPickImage?: () => Promise<{ mediaId: string } | null>
+  ) {
+    await act(async () => {
+      root.render(
+        <RichTextEditor
+          value={emptyRichDoc()}
+          onChange={onChange}
+          onUploadImage={async () => ({ error: "not under test" })}
+          onPickImage={onPickImage}
+        />
+      )
+    })
+  }
+
+  it("offers the picker only when the app provides one", async () => {
+    await mountWith(() => {})
+    expect(container.querySelector('[aria-label="Insert existing image"]')).toBeNull()
+
+    await mountWith(() => {}, async () => null)
+    expect(
+      container.querySelector('[aria-label="Insert existing image"]')
+    ).not.toBeNull()
+  })
+
+  it("inserts the picked media id as an image node", async () => {
+    const docs: RichDoc[] = []
+    await mountWith(
+      (doc) => docs.push(doc),
+      async () => ({ mediaId: "0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b" })
+    )
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[aria-label="Insert existing image"]')!
+        .click()
+    })
+
+    const latest = docs.at(-1)
+    expect(latest).toBeDefined()
+    expect(richDocSchema.safeParse(latest).success).toBe(true)
+    expect(JSON.stringify(latest)).toContain(
+      '"mediaId":"0198c5a4-2f6f-4b58-9f5a-1c2d3e4f5a6b"'
+    )
+  })
+
+  it("inserts nothing when the picker is cancelled", async () => {
+    const docs: RichDoc[] = []
+    await mountWith(
+      (doc) => docs.push(doc),
+      async () => null
+    )
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[aria-label="Insert existing image"]')!
+        .click()
+    })
+
+    expect(docs).toHaveLength(0)
+  })
+})

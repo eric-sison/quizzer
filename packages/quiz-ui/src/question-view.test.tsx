@@ -197,6 +197,37 @@ describe("question images", () => {
     expect(container.querySelector("img")).toBeNull()
   })
 
+  it("renders an image inside an answer option, resolved the same way", async () => {
+    const base = singleChoice()
+    if (!("options" in base)) throw new Error("expected options")
+    const question = {
+      ...base,
+      options: base.options.map((option, i) =>
+        i === 0
+          ? {
+              ...option,
+              labelDoc: {
+                type: "doc" as const,
+                content: [
+                  ...option.labelDoc.content,
+                  {
+                    type: "image" as const,
+                    attrs: { mediaId: IMAGE_ID, alt: "Seven tallies" },
+                  },
+                ],
+              },
+            }
+          : option
+      ),
+    }
+
+    await showWithResolver(projected(question), (id) => `data:image/png;base64,${id}`)
+
+    const img = container.querySelector("img")
+    expect(img?.getAttribute("src")).toBe(`data:image/png;base64,${IMAGE_ID}`)
+    expect(img?.getAttribute("alt")).toBe("Seven tallies")
+  })
+
   it("renders no image without a resolver, and none for a question without one", async () => {
     await showWithResolver(projected(withImage()))
     expect(container.querySelector("img")).toBeNull()
@@ -255,7 +286,8 @@ describe("the control follows the question kind", () => {
   it("tells the student plainly when the kind is newer than this build", async () => {
     // What a desktop build predating a new question type receives. The Rust
     // side degrades the same way, via #[serde(other)].
-    const future = { ...projected(essay()), kind: "matching" } as unknown as ManifestQuestion
+    // "hotspot" is not a real kind; it stands in for whatever ships next.
+    const future = { ...projected(essay()), kind: "hotspot" } as unknown as ManifestQuestion
 
     await show(future)
     expect(container.textContent).toContain("newer version of the exam app")
@@ -437,5 +469,222 @@ describe("no answer reaches the rendered page", () => {
 
     await show(projected(withRubric), { readOnly: true })
     expect(container.textContent).not.toContain("chlorophyll")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The four newer kinds
+// ---------------------------------------------------------------------------
+
+function numeric(): Question {
+  return {
+    ...createQuestion("numeric"),
+    promptDoc: richDocFromText("Boiling point of water at sea level?"),
+    correctValue: 100,
+    tolerance: 0.5,
+    unit: "°C",
+  }
+}
+
+function fillInBlank(): Question {
+  const base = createQuestion("fill_in_blank")
+  if (!("blanks" in base)) throw new Error("expected blanks")
+  return {
+    ...base,
+    promptDoc: richDocFromText("Water is ___ and ___."),
+    blanks: [
+      { ...base.blanks[0]!, acceptedAnswers: ["hydrogen"] },
+      { id: "blank-2", acceptedAnswers: ["oxygen"] },
+    ],
+  }
+}
+
+function matchingQ(): Question {
+  const base = createQuestion("matching")
+  if (!("pairs" in base)) throw new Error("expected pairs")
+  return {
+    ...base,
+    promptDoc: richDocFromText("Match organelle to role."),
+    pairs: [
+      { ...base.pairs[0]!, leftText: "Mitochondrion", rightText: "ATP" },
+      { ...base.pairs[1]!, leftText: "Chloroplast", rightText: "Photosynthesis" },
+    ],
+    distractors: [{ id: "distractor-1", text: "Waste disposal" }],
+  }
+}
+
+function orderingQ(): Question {
+  const base = createQuestion("ordering")
+  if (!("items" in base)) throw new Error("expected items")
+  return {
+    ...base,
+    promptDoc: richDocFromText("Order the phases."),
+    items: [
+      { ...base.items[0]!, labelDoc: richDocFromText("Prophase") },
+      { ...base.items[1]!, labelDoc: richDocFromText("Metaphase") },
+      { ...base.items[2]!, labelDoc: richDocFromText("Anaphase") },
+    ],
+  }
+}
+
+function typeInto(input: HTMLInputElement, text: string) {
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value"
+  )!.set!
+  setValue.call(input, text)
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+}
+
+describe("numeric answers", () => {
+  it("shows the unit and emits the raw string, never a parsed number", async () => {
+    const seen: unknown[] = []
+    await show(projected(numeric()), { onChange: (v) => seen.push(v) })
+
+    expect(container.textContent).toContain("°C")
+    const input = container.querySelector<HTMLInputElement>("input[inputmode=decimal]")!
+    await act(async () => typeInto(input, "99.50"))
+
+    expect(seen.at(-1)).toBe("99.50")
+  })
+
+  it("never renders the correct value or tolerance", async () => {
+    await show(projected(numeric()), { readOnly: true })
+    expect(container.innerHTML).not.toContain("100")
+    expect(container.innerHTML).not.toContain("tolerance")
+  })
+})
+
+describe("fill-in-the-blank answers", () => {
+  it("renders one input per blank and emits a dense positional array", async () => {
+    const seen: unknown[] = []
+    await show(projected(fillInBlank()), { onChange: (v) => seen.push(v) })
+
+    expect(container.textContent).toContain("Blank 1")
+    expect(container.textContent).toContain("Blank 2")
+    const fields = [...container.querySelectorAll<HTMLInputElement>("input")]
+    expect(fields).toHaveLength(2)
+
+    await act(async () => typeInto(fields[1]!, "oxygen"))
+    expect(seen.at(-1)).toEqual(["", "oxygen"])
+  })
+
+  it("tolerates a stale non-array answer", async () => {
+    await show(projected(fillInBlank()), { value: "left over essay text" })
+    const fields = [...container.querySelectorAll<HTMLInputElement>("input")]
+    expect(fields.map((f) => f.value)).toEqual(["", ""])
+  })
+})
+
+describe("matching answers", () => {
+  it("offers one choice control per left item over every right item", async () => {
+    const q = matchingQ()
+    await show(projected(q), { onChange: () => {} })
+
+    expect(container.textContent).toContain("Mitochondrion")
+    expect(container.textContent).toContain("Chloroplast")
+    const triggers = [...container.querySelectorAll('[aria-label^="Match for"]')]
+    expect(triggers).toHaveLength(2)
+  })
+
+  it("read-only renders the chosen match as text, or a dash when unanswered", async () => {
+    const q = matchingQ()
+    const manifest = projected(q)
+    if (q.kind !== "matching") throw new Error("expected matching")
+    const record = { [q.pairs[0]!.leftId]: q.pairs[0]!.rightId }
+
+    await show(manifest, { readOnly: true, value: record })
+
+    expect(container.textContent).toContain("ATP")
+    expect(container.textContent).toContain("—")
+    expect(container.querySelector('[aria-label^="Match for"]')).toBeNull()
+  })
+
+  it("tolerates a stale array or document answer without crashing", async () => {
+    await show(projected(matchingQ()), { readOnly: true, value: ["stale-id"] })
+    expect(container.textContent).toContain("Mitochondrion")
+  })
+})
+
+describe("ordering answers", () => {
+  it("presents manifest order for an untouched question and reorders on move", async () => {
+    const q = orderingQ()
+    if (q.kind !== "ordering") throw new Error("expected ordering")
+    const manifest = projected(q)
+    const seen: unknown[] = []
+
+    await show(manifest, { onChange: (v) => seen.push(v) })
+
+    // The projection de-correlates: displayed order is id-sorted.
+    const displayedIds = manifest.choices.map((c) => c.id)
+    expect(displayedIds).toEqual([...q.items.map((i) => i.id)].sort())
+
+    const firstLabel = manifest.choices[0]!.label
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(`[aria-label='Move "${firstLabel}" down']`)!
+        .click()
+    })
+
+    const emitted = seen.at(-1) as string[]
+    expect(emitted).toHaveLength(3)
+    expect(emitted[1]).toBe(displayedIds[0])
+    expect([...emitted].sort()).toEqual([...displayedIds].sort())
+  })
+
+  it("drops stale foreign ids and appends unmentioned items", async () => {
+    const manifest = projected(orderingQ())
+    const [a, b, c] = manifest.choices.map((x) => x.id)
+
+    await show(manifest, { value: ["gone-id", c!, a!], onChange: () => {} })
+
+    const rows = [...container.querySelectorAll("li")]
+    const texts = rows.map((r) => r.textContent ?? "")
+    const labelOf = (id: string) => manifest.choices.find((x) => x.id === id)!.label
+    expect(texts[0]).toContain(labelOf(c!))
+    expect(texts[1]).toContain(labelOf(a!))
+    expect(texts[2]).toContain(labelOf(b!))
+  })
+
+  it("read-only hides the move buttons", async () => {
+    await show(projected(orderingQ()), { readOnly: true })
+    expect(container.querySelector('[aria-label^="Move"]')).toBeNull()
+  })
+})
+
+describe("shuffled options", () => {
+  function shuffledChoice(): Question {
+    const q = singleChoice()
+    if (!("shuffleOptions" in q)) throw new Error("expected choice")
+    return { ...q, shuffleOptions: true }
+  }
+
+  async function renderedLabels(
+    question: ManifestQuestion,
+    seed: string
+  ): Promise<string[]> {
+    await act(async () => {
+      root.render(
+        <QuestionView
+          question={question}
+          index={0}
+          total={1}
+          answer={{}}
+          shuffleSeed={seed}
+        />
+      )
+    })
+    return [...container.querySelectorAll("label")].map((l) => l.textContent ?? "")
+  }
+
+  it("orders by the seed, keeps every option, and is stable per seed", async () => {
+    // One manifest for both renders: the seed keys off the question id, so a
+    // freshly minted question would legitimately shuffle differently.
+    const question = projected(shuffledChoice())
+    const first = await renderedLabels(question, "sitting-1")
+    const again = await renderedLabels(question, "sitting-1")
+
+    expect(first).toEqual(again)
+    expect([...first].sort()).toEqual(question.choices.map((c) => c.label).sort())
   })
 })

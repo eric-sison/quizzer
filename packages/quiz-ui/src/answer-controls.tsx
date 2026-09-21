@@ -10,12 +10,28 @@ import {
   type ManifestChoice,
   type ManifestQuestion,
 } from "@workspace/quiz-core"
+import { ArrowDown, ArrowUp } from "lucide-react"
+import { Button } from "@workspace/ui/components/button"
 import { Checkbox } from "@workspace/ui/components/checkbox"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@workspace/ui/components/input-group"
+import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
 import { RadioGroup, RadioGroupItem } from "@workspace/ui/components/radio-group"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 
 import { RichText } from "./rich-text"
 import { RichTextEditor } from "./rich-text-editor"
+import { seededShuffle } from "./shuffle"
 
 /**
  * How a student answers, and the only part of a question that differs between
@@ -41,17 +57,61 @@ export type AnswerControls = {
 export function AnswerSection({
   question,
   answer,
+  resolveImageSrc,
+  shuffleSeed,
 }: {
   question: ManifestQuestion
   answer: AnswerControls
+  /** For image nodes inside choice labels; see QuestionView. */
+  resolveImageSrc?: (mediaId: string) => string | undefined
+  /**
+   * Per-sitting seed for shuffle_options. Deterministic on purpose: the shell
+   * holds one seed for the whole sitting, so the order survives navigation and
+   * remounts instead of reshuffling every time the student goes Back.
+   */
+  shuffleSeed?: string
 }) {
   switch (question.kind) {
     case "true_false":
     case "single_choice":
-      return <ChoiceAnswer question={question} answer={answer} selection="one" />
+      return (
+        <ChoiceAnswer
+          question={question}
+          answer={answer}
+          selection="one"
+          resolveImageSrc={resolveImageSrc}
+          shuffleSeed={shuffleSeed}
+        />
+      )
 
     case "multiple_choice":
-      return <ChoiceAnswer question={question} answer={answer} selection="many" />
+      return (
+        <ChoiceAnswer
+          question={question}
+          answer={answer}
+          selection="many"
+          resolveImageSrc={resolveImageSrc}
+          shuffleSeed={shuffleSeed}
+        />
+      )
+
+    case "numeric":
+      return <NumericAnswer question={question} answer={answer} />
+
+    case "fill_in_blank":
+      return <FillInBlankAnswer question={question} answer={answer} />
+
+    case "matching":
+      return <MatchingAnswer question={question} answer={answer} />
+
+    case "ordering":
+      return (
+        <OrderingAnswer
+          question={question}
+          answer={answer}
+          resolveImageSrc={resolveImageSrc}
+        />
+      )
 
     case "essay":
       return <EssayAnswer question={question} answer={answer} />
@@ -73,12 +133,26 @@ function ChoiceAnswer({
   question,
   answer,
   selection,
+  resolveImageSrc,
+  shuffleSeed,
 }: {
   question: ManifestQuestion
   answer: AnswerControls
   selection: "one" | "many"
+  resolveImageSrc?: (mediaId: string) => string | undefined
+  shuffleSeed?: string
 }) {
   const readOnly = answer.readOnly === true || answer.onChange === undefined
+
+  // Seeded per sitting AND per question, so two shuffled questions don't get
+  // the same permutation just because they have the same option count.
+  const choices = React.useMemo(
+    () =>
+      question.shuffle_options
+        ? seededShuffle(question.choices, `${shuffleSeed ?? ""}:${question.id}`)
+        : question.choices,
+    [question, shuffleSeed]
+  )
 
   if (selection === "one") {
     // Narrowing, not a runtime defence: an array here would simply match no
@@ -93,8 +167,13 @@ function ChoiceAnswer({
         onValueChange={(next) => answer.onChange?.(String(next))}
         aria-label="Select one answer"
       >
-        {question.choices.map((choice) => (
-          <ChoiceRow key={choice.id} choice={choice} selected={choice.id === value}>
+        {choices.map((choice) => (
+          <ChoiceRow
+            key={choice.id}
+            choice={choice}
+            selected={choice.id === value}
+            resolveImageSrc={resolveImageSrc}
+          >
             <RadioGroupItem value={choice.id} />
           </ChoiceRow>
         ))}
@@ -110,10 +189,15 @@ function ChoiceAnswer({
 
   return (
     <div role="group" aria-label="Select all that apply" className="grid w-full gap-2">
-      {question.choices.map((choice) => {
+      {choices.map((choice) => {
         const checked = selected.includes(choice.id)
         return (
-          <ChoiceRow key={choice.id} choice={choice} selected={checked}>
+          <ChoiceRow
+            key={choice.id}
+            choice={choice}
+            selected={checked}
+            resolveImageSrc={resolveImageSrc}
+          >
             <Checkbox
               checked={checked}
               readOnly={readOnly}
@@ -132,6 +216,231 @@ function ChoiceAnswer({
   )
 }
 
+function NumericAnswer({
+  question,
+  answer,
+}: {
+  question: ManifestQuestion
+  answer: AnswerControls
+}) {
+  const readOnly = answer.readOnly === true || answer.onChange === undefined
+  // The raw string the student typed, never parsed here: "0.50" and "0.5" are
+  // the same number but not the same answer sheet, and grading is server work.
+  const value = typeof answer.value === "string" ? answer.value : ""
+
+  return (
+    <div className="max-w-56">
+      <InputGroup>
+        <InputGroupInput
+          type="text"
+          inputMode="decimal"
+          value={value}
+          readOnly={readOnly}
+          onChange={(event) => answer.onChange?.(event.currentTarget.value)}
+          placeholder="Your answer"
+          aria-label={question.unit ? `Answer in ${question.unit}` : "Numeric answer"}
+        />
+        {question.unit ? (
+          <InputGroupAddon align="inline-end">
+            <span className="text-xs text-muted-foreground">{question.unit}</span>
+          </InputGroupAddon>
+        ) : null}
+      </InputGroup>
+    </div>
+  )
+}
+
+function FillInBlankAnswer({
+  question,
+  answer,
+}: {
+  question: ManifestQuestion
+  answer: AnswerControls
+}) {
+  const readOnly = answer.readOnly === true || answer.onChange === undefined
+  const count = question.blank_count ?? 0
+  // A stale answer from before a kind switch may be a string or a record;
+  // anything but an array simply pre-fills nothing.
+  const current = Array.isArray(answer.value) ? answer.value : []
+
+  function setBlank(index: number, text: string) {
+    // Emit a dense array so blank i always lands at index i.
+    answer.onChange?.(
+      Array.from({ length: count }, (_, i) => (i === index ? text : (current[i] ?? "")))
+    )
+  }
+
+  return (
+    <div className="flex max-w-md flex-col gap-2.5">
+      {Array.from({ length: count }, (_, index) => (
+        <Label key={index} className="flex-col items-start gap-1.5">
+          <span className="text-xs text-muted-foreground">Blank {index + 1}</span>
+          <Input
+            value={current[index] ?? ""}
+            readOnly={readOnly}
+            onChange={(event) => setBlank(index, event.currentTarget.value)}
+            placeholder="Your answer"
+          />
+        </Label>
+      ))}
+    </div>
+  )
+}
+
+/** A stored matching answer, or {} for any stale non-record shape. */
+function asMatchRecord(value: AnswerValue | undefined): Record<string, string> {
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    ("type" in value && (value as { type?: unknown }).type === "doc")
+  ) {
+    return {}
+  }
+  return value as Record<string, string>
+}
+
+function MatchingAnswer({
+  question,
+  answer,
+}: {
+  question: ManifestQuestion
+  answer: AnswerControls
+}) {
+  const readOnly = answer.readOnly === true || answer.onChange === undefined
+  const record = asMatchRecord(answer.value)
+  const rightItems = question.right_items ?? []
+  const labelOf = (id: string | undefined) =>
+    rightItems.find((item) => item.id === id)?.label
+
+  return (
+    <div className="flex flex-col gap-2">
+      {(question.left_items ?? []).map((left) => {
+        const chosen = record[left.id]
+        return (
+          <div
+            key={left.id}
+            data-selected={chosen !== undefined || undefined}
+            className="flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors data-selected:border-primary/40 data-selected:bg-primary/5"
+          >
+            <span className="min-w-0 flex-1">
+              <RichText doc={left.label_doc} fallback={left.label} />
+            </span>
+            {readOnly ? (
+              // Like the exam, not a switched-off form: the choice reads as text.
+              <span className="text-sm text-muted-foreground">
+                {labelOf(chosen) ?? "—"}
+              </span>
+            ) : (
+              <div className="w-52">
+                <Select
+                  value={chosen ?? null}
+                  onValueChange={(next) => {
+                    if (typeof next !== "string") return
+                    answer.onChange?.({ ...record, [left.id]: next })
+                  }}
+                >
+                  <SelectTrigger aria-label={`Match for "${left.label}"`}>
+                    <SelectValue placeholder="Choose a match…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {rightItems.map((right) => (
+                      <SelectItem key={right.id} value={right.id}>
+                        {right.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function OrderingAnswer({
+  question,
+  answer,
+  resolveImageSrc,
+}: {
+  question: ManifestQuestion
+  answer: AnswerControls
+  resolveImageSrc?: (mediaId: string) => string | undefined
+}) {
+  const readOnly = answer.readOnly === true || answer.onChange === undefined
+
+  // Display order: the student's stored order first (dropping ids that are no
+  // longer in the manifest), then anything they have not touched yet, in
+  // manifest order. Tolerates stale answers from a republished item set.
+  const stored = Array.isArray(answer.value) ? answer.value : []
+  const byId = new Map(question.choices.map((choice) => [choice.id, choice]))
+  const ordered = [
+    ...stored.filter((id) => byId.has(id)),
+    ...question.choices.map((c) => c.id).filter((id) => !stored.includes(id)),
+  ]
+
+  function move(index: number, delta: number) {
+    const target = index + delta
+    if (target < 0 || target >= ordered.length) return
+    const next = [...ordered]
+    const [moved] = next.splice(index, 1)
+    if (moved) next.splice(target, 0, moved)
+    answer.onChange?.(next)
+  }
+
+  return (
+    <ol aria-label="Arrange in order" className="flex flex-col gap-2">
+      {ordered.map((id, index) => {
+        const choice = byId.get(id)
+        if (!choice) return null
+        const name = choice.label || `item ${index + 1}`
+        return (
+          <li
+            key={id}
+            className="flex items-center gap-3 rounded-lg border px-3 py-2 text-sm"
+          >
+            <span className="w-5 shrink-0 text-right font-mono text-xs text-muted-foreground">
+              {index + 1}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5 [&_img]:max-h-40">
+              <RichText
+                doc={choice.label_doc}
+                fallback={choice.label}
+                resolveImageSrc={resolveImageSrc}
+              />
+            </span>
+            {readOnly ? null : (
+              <span className="flex shrink-0 gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Move "${name}" up`}
+                  disabled={index === 0}
+                  onClick={() => move(index, -1)}
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Move "${name}" down`}
+                  disabled={index === ordered.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  <ArrowDown />
+                </Button>
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 /**
  * The row is a `<label>`, so the whole thing is a hit target rather than just
  * the 16px control. On a locked-down exam machine a student cannot zoom, which
@@ -140,10 +449,12 @@ function ChoiceAnswer({
 function ChoiceRow({
   choice,
   selected,
+  resolveImageSrc,
   children,
 }: {
   choice: ManifestChoice
   selected: boolean
+  resolveImageSrc?: (mediaId: string) => string | undefined
   children: React.ReactNode
 }) {
   return (
@@ -153,8 +464,14 @@ function ChoiceRow({
         className="flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors hover:bg-muted data-selected:border-primary/40 data-selected:bg-primary/5"
       >
         {children}
-        <span className="min-w-0 flex-1 font-normal">
-          <RichText doc={choice.label_doc} fallback={choice.label} />
+        {/* [&_img] out-specifies the renderer's own max-h: an illustration
+            that suits a prompt would swamp an answer row. */}
+        <span className="flex min-w-0 flex-1 flex-col gap-1.5 font-normal [&_img]:max-h-40">
+          <RichText
+            doc={choice.label_doc}
+            fallback={choice.label}
+            resolveImageSrc={resolveImageSrc}
+          />
         </span>
       </span>
     </Label>

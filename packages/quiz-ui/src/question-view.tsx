@@ -30,6 +30,7 @@ export function QuestionView({
   total,
   answer,
   resolveImageSrc,
+  shuffleSeed,
 }: {
   question: ManifestQuestion
   /** Zero-based. */
@@ -44,6 +45,11 @@ export function QuestionView({
    * images render as nothing rather than as broken frames.
    */
   resolveImageSrc?: (mediaId: string) => string | undefined
+  /**
+   * Per-sitting seed for shuffled option order. Held by the shell (preview
+   * page, exam screen) so the order is stable across navigation and remounts.
+   */
+  shuffleSeed?: string
 }) {
   return (
     <section aria-labelledby={`question-${question.id}-heading`} className="flex flex-col gap-5">
@@ -76,7 +82,12 @@ export function QuestionView({
         />
       </div>
 
-      <AnswerSection question={question} answer={answer} />
+      <AnswerSection
+        question={question}
+        answer={answer}
+        resolveImageSrc={resolveImageSrc}
+        shuffleSeed={shuffleSeed}
+      />
     </section>
   )
 }
