@@ -60,7 +60,10 @@ export type LinkInfo = {
 
 export type LockdownReport = {
   engaged: string[]
+  /** Not in force: inherent platform limits *and* anything that failed. */
   unavailable: string[]
+  /** A measure that was expected to apply didn't. Inherent limits don't set this. */
+  degraded: boolean
   bypassed: boolean
 }
 

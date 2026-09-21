@@ -15,7 +15,7 @@ pub fn prepare<R: Runtime>(window: &WebviewWindow<R>) -> bool {
 
 pub fn engage<R: Runtime>(window: &WebviewWindow<R>, report: &mut LockdownReport) {
     let _ = prepare(window);
-    report.unavailable("platform lockdown (unsupported OS - exams should not be taken here)");
+    report.failed("platform lockdown (unsupported OS - exams should not be taken here)");
 }
 
 pub fn reassert<R: Runtime>(_window: &WebviewWindow<R>) {}

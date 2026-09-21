@@ -129,13 +129,16 @@ pub async fn start_session<R: Runtime>(
     }
 
     state.events.record(kind::EXAM_STARTED, None);
+    // `degraded`, not `unavailable`: every platform has inherent limits it will
+    // always list, and flagging those as degradation would make the signal
+    // meaningless.
     state.events.record(
-        if report.unavailable.is_empty() {
-            kind::LOCKDOWN_ENGAGED
-        } else {
+        if report.degraded {
             kind::LOCKDOWN_DEGRADED
+        } else {
+            kind::LOCKDOWN_ENGAGED
         },
-        Some(report.unavailable.join("; ")),
+        Some(report.engaged.join("; ")),
     );
     if clock_skew_s.abs() > 120 {
         state.events.record(

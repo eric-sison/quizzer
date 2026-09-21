@@ -45,8 +45,17 @@ mod platform;
 pub struct LockdownReport {
     /// Measures confirmed active.
     pub engaged: Vec<String>,
-    /// Measures this platform cannot provide, or that failed to apply.
+    /// Measures not in force - both those this platform inherently cannot
+    /// provide and those that were expected to apply but didn't. Shown to the
+    /// student, who should see the full picture either way.
     pub unavailable: Vec<String>,
+    /// True when a measure we *expected* to apply failed to.
+    ///
+    /// Distinct from a non-empty `unavailable`: macOS can never block
+    /// Ctrl+Cmd+Q, so that is always listed and is not a fault. This flag means
+    /// something went wrong on this particular machine, and is what the proctor
+    /// log keys on.
+    pub degraded: bool,
     /// True when running with `--unlocked` in a debug build.
     pub bypassed: bool,
 }
@@ -56,8 +65,15 @@ impl LockdownReport {
         self.engaged.push(what.to_string());
     }
 
+    /// A limit inherent to the platform. Not a fault.
     fn unavailable(&mut self, what: &str) {
         self.unavailable.push(what.to_string());
+    }
+
+    /// A measure that should have applied and didn't.
+    fn failed(&mut self, what: &str) {
+        self.unavailable.push(what.to_string());
+        self.degraded = true;
     }
 }
 
@@ -90,7 +106,7 @@ pub fn engage<R: Runtime>(window: &WebviewWindow<R>) -> LockdownReport {
 
     if is_bypassed() {
         report.bypassed = true;
-        report.unavailable("all lockdown (running with --unlocked)");
+        report.failed("all lockdown (running with --unlocked)");
         let _ = window.show();
         let _ = window.set_focus();
         return report;
@@ -153,7 +169,7 @@ fn harden_window<R: Runtime>(window: &WebviewWindow<R>, report: &mut LockdownRep
     if window.set_content_protected(true).is_ok() {
         report.engaged("screen-capture protection");
     } else {
-        report.unavailable("screen-capture protection");
+        report.failed("screen-capture protection");
     }
 
     report.engaged("fullscreen, undecorated window");

@@ -165,7 +165,7 @@ pub fn engage<R: Runtime>(window: &WebviewWindow<R>, report: &mut LockdownReport
         report.engaged("Alt+F4 blocked");
         report.engaged("taskbar hidden");
     } else {
-        report.unavailable("keyboard hook failed to install - Alt+Tab and the Windows key work");
+        report.failed("keyboard hook failed to install - Alt+Tab and the Windows key work");
     }
 
     // Say the quiet part out loud, on every machine, every time.

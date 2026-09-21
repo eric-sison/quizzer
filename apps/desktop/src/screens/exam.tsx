@@ -198,12 +198,16 @@ function LockdownBadge({ lockdown }: { lockdown: LockdownReport | null }) {
     <div className="relative">
       <Button
         size="sm"
-        variant={lockdown.bypassed ? "destructive" : "ghost"}
+        variant={lockdown.bypassed || lockdown.degraded ? "destructive" : "ghost"}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
         <Lock aria-hidden />
-        {lockdown.bypassed ? "Lockdown off" : "Exam mode"}
+        {lockdown.bypassed
+          ? "Lockdown off"
+          : lockdown.degraded
+            ? "Exam mode (limited)"
+            : "Exam mode"}
       </Button>
 
       {open ? (
