@@ -1,7 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { isRichDocEmpty, type Question, type QuestionKind } from "@workspace/quiz-core"
+import {
+  isRichDocEmpty,
+  isSplitScored,
+  withDerivedPoints,
+  type Question,
+  type QuestionKind,
+} from "@workspace/quiz-core"
 import { ChevronDown } from "lucide-react"
 import {
   AlertDialog,
@@ -92,7 +98,7 @@ export function QuestionTypeSelect({
   /** Keep the prompt, scoring and explanation; replace the answer config. */
   function convert(kind: QuestionKind): Question {
     const fresh = typeDef(kind).createDefault()
-    return {
+    const next: Question = {
       ...fresh,
       id: question.id,
       promptDoc: question.promptDoc,
@@ -104,6 +110,10 @@ export function QuestionTypeSelect({
         ? { explanationDoc: question.explanationDoc }
         : {}),
     }
+    // A split-scored question's points follow from its parts, and the fresh
+    // one has none priced yet. Carrying the old total across would leave the
+    // read-only field showing a number its own scoring does not produce.
+    return isSplitScored(next) ? withDerivedPoints(next) : next
   }
 
   function select(kind: QuestionKind) {
@@ -180,8 +190,11 @@ export function QuestionTypeSelect({
             <AlertDialogTitle>Change question type?</AlertDialogTitle>
             <AlertDialogDescription>
               Switching to {pending ? typeDef(pending).label : "this type"}{" "}
-              {pending ? lossFor(question, pending) : null} The question text,
-              points and required setting are kept.
+              {pending ? lossFor(question, pending) : null} The question text
+              and required setting are kept
+              {pending && isSplitScored(typeDef(pending).createDefault())
+                ? ", and its points are recalculated from the parts you price."
+                : ", along with its points."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

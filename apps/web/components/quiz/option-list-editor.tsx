@@ -38,6 +38,7 @@ import {
 } from "@workspace/ui/components/input-group"
 import { RadioGroupItem } from "@workspace/ui/components/radio-group"
 
+import { PointsInput } from "@/components/quiz/scoring-editor"
 import { useQuestionMedia } from "@/components/quiz/question-media-context"
 import { SectionHeader } from "@/components/quiz/section-header"
 import { SortableList, useSortableRow } from "@/components/quiz/sortable"
@@ -121,6 +122,12 @@ export type OptionListEditorProps = {
   footerHint?: string
   /** Extra footer content, e.g. the shuffle-options switch. */
   footerExtra?: React.ReactNode
+  /**
+   * Show a point value on each correct row - multiple choice under per-answer
+   * scoring, and nothing else. Incorrect rows never show one: an option that
+   * earns nothing has no award to type.
+   */
+  optionPoints?: boolean
 }
 
 export function OptionListEditor({
@@ -132,6 +139,7 @@ export function OptionListEditor({
   itemNoun = "Option",
   footerHint,
   footerExtra,
+  optionPoints = false,
 }: OptionListEditorProps) {
   const correctCount = options.filter((option) => option.correct).length
 
@@ -147,6 +155,19 @@ export function OptionListEditor({
         // Radio semantics: marking one correct clears the rest.
         if (selection === "one" && correct) return { ...option, correct: false }
         return option
+      })
+    )
+  }
+
+  /** `undefined` clears the key rather than storing an explicit undefined. */
+  function setPoints(id: string, points: number | undefined) {
+    emit(
+      options.map((option) => {
+        if (option.id !== id) return option
+        const next = { ...option }
+        if (points === undefined) delete next.points
+        else next.points = points
+        return next
       })
     )
   }
@@ -239,7 +260,9 @@ export function OptionListEditor({
               canDelete={options.length > 2}
               atStart={index === 0}
               atEnd={index === options.length - 1}
+              showPoints={optionPoints}
               onSetCorrect={(correct) => setCorrect(option.id, correct)}
+              onSetPoints={(points) => setPoints(option.id, points)}
               onUpdateDoc={(transform) => updateDoc(option.id, transform)}
               onPaste={(text) => pasteInto(index, text)}
               onMove={(delta) => move(index, delta)}
@@ -278,7 +301,9 @@ function OptionRow({
   canDelete,
   atStart,
   atEnd,
+  showPoints,
   onSetCorrect,
+  onSetPoints,
   onUpdateDoc,
   onPaste,
   onMove,
@@ -291,7 +316,9 @@ function OptionRow({
   canDelete: boolean
   atStart: boolean
   atEnd: boolean
+  showPoints: boolean
   onSetCorrect: (correct: boolean) => void
+  onSetPoints: (points: number | undefined) => void
   onUpdateDoc: (transform: (doc: RichDoc) => RichDoc) => void
   /** Returns true when the list handled a multi-line paste. */
   onPaste: (text: string) => boolean
@@ -329,7 +356,7 @@ function OptionRow({
     <li
       {...rowProps}
       data-correct={option.correct || undefined}
-      className={`flex items-start gap-2 rounded-lg border border-transparent px-1 transition-colors data-correct:border-primary/40 data-correct:bg-primary/5 ${
+      className={`flex items-start gap-2 rounded-lg border border-transparent px-1 py-1.5 transition-colors data-correct:border-primary/40 data-correct:bg-primary/5 ${
         isDragging ? "bg-background shadow-md" : ""
       }`}
     >
@@ -363,7 +390,7 @@ function OptionRow({
       {/* One column for everything the option says: the text field and, under
           it, its image - so the picture lines up with the text it belongs to
           instead of hanging at an unrelated indent. */}
-      <span className="flex min-w-0 flex-1 flex-col gap-2 pb-1">
+      <span className="flex min-w-0 flex-1 flex-col gap-2">
         {/* The badge sits inside the field so every row's input is the same
             width whether or not it is marked correct. InputGroup is what
             reserves room for it, rather than padding the input from out here. */}
@@ -433,6 +460,24 @@ function OptionRow({
           </p>
         ) : null}
       </span>
+
+      {/* Only on correct rows, and only under per-answer scoring. A blank box
+          is not a zero: the validator refuses to publish until it is filled,
+          and the field says so rather than waiting for the publish dialog. */}
+      {showPoints && option.correct ? (
+        <span className="flex h-9 shrink-0 items-center gap-1.5">
+          <span className="w-14">
+            <PointsInput
+              value={option.points}
+              ariaLabel={`Points for ${name}`}
+              placeholder=""
+              invalid={option.points === undefined}
+              onChange={onSetPoints}
+            />
+          </span>
+          <span className="text-[11px] text-muted-foreground">pts</span>
+        </span>
+      ) : null}
 
       {media ? (
         <>

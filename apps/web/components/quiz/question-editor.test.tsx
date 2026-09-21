@@ -5,9 +5,11 @@
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import {
+  createBlank,
   createOption,
   createQuestion,
   richDocFromText,
+  withDerivedPoints,
   type Question,
 } from "@workspace/quiz-core"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -56,6 +58,23 @@ function text() {
   return container.textContent ?? ""
 }
 
+/**
+ * Type into a controlled field. React listens for the native input event, so
+ * the value has to be set through the prototype setter it does not shadow.
+ */
+async function typeInto(selector: string, value: string) {
+  const input = container.querySelector<HTMLInputElement>(selector)
+  if (!input) throw new Error(`no input matching ${selector}`)
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value"
+  )!.set!
+  await act(async () => {
+    setValue.call(input, value)
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+}
+
 function labels() {
   return [...container.querySelectorAll("[aria-label]")].map((el) =>
     el.getAttribute("aria-label")
@@ -94,6 +113,58 @@ describe("shared shell", () => {
     })
 
     expect(seen.at(-1)?.points).toBe(question.points + 1)
+  })
+
+  it("refuses to step the points of a many-answer question", async () => {
+    const seen: Question[] = []
+    // Two correct answers at the default rate: worth 2, and not by hand.
+    const question = {
+      ...createQuestion("multiple_choice"),
+      options: [
+        { ...createOption("a"), correct: true },
+        { ...createOption("b"), correct: true },
+      ],
+    }
+    await mount(withDerivedPoints(question), (q) => seen.push(q))
+
+    const up = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Increase points"]'
+    )!
+    const down = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Decrease points"]'
+    )!
+
+    expect(up.disabled).toBe(true)
+    expect(down.disabled).toBe(true)
+
+    await act(async () => up.click())
+    expect(seen).toEqual([])
+  })
+
+  it("shows the total its per-answer scoring produces", async () => {
+    await mount(
+      withDerivedPoints({
+        ...createQuestion("multiple_choice"),
+        pointsPerCorrect: 3,
+        options: [
+          { ...createOption("a"), correct: true },
+          { ...createOption("b"), correct: true },
+          { ...createOption("c"), correct: false },
+        ],
+      })
+    )
+
+    expect(text()).toContain("Worth 6 points")
+    expect(text()).toContain("across 2 correct answers")
+  })
+
+  it("leaves every other kind's stepper alone", async () => {
+    await mount(createQuestion("single_choice"))
+
+    const up = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Increase points"]'
+    )!
+    expect(up.disabled).toBe(false)
   })
 })
 
@@ -222,6 +293,148 @@ describe("per-kind answer configuration", () => {
     await mount(question)
 
     expect(text()).toContain("2 of 3 marked correct")
+  })
+
+  it("multiple choice shows a per-answer value only on the correct rows", async () => {
+    await mount({
+      ...createQuestion("multiple_choice"),
+      scoring: "per_option",
+      options: [
+        { ...createOption("a"), correct: true },
+        { ...createOption("b"), correct: false },
+      ],
+    })
+
+    expect(labels()).toContain("Points for a")
+    expect(labels()).not.toContain("Points for b")
+  })
+
+  it("multiple choice hides the per-answer values under the flat rate", async () => {
+    await mount({
+      ...createQuestion("multiple_choice"),
+      options: [{ ...createOption("a"), correct: true }, createOption("b")],
+    })
+
+    expect(labels()).not.toContain("Points for a")
+    expect(labels()).toContain("Points per correct answer")
+  })
+
+  it("multiple choice flags a correct answer with no value typed on it", async () => {
+    await mount({
+      ...createQuestion("multiple_choice"),
+      scoring: "per_option",
+      options: [
+        { ...createOption("a"), correct: true, points: 2 },
+        { ...createOption("b"), correct: true },
+      ],
+    })
+
+    const filled = container.querySelector('[aria-label="Points for a"]')
+    const blank = container.querySelector('[aria-label="Points for b"]')
+
+    expect(filled!.getAttribute("aria-invalid")).toBeNull()
+    expect(blank!.getAttribute("aria-invalid")).toBe("true")
+  })
+
+  it("multiple choice re-totals as a per-answer value is typed", async () => {
+    const seen: Question[] = []
+    await mount(
+      {
+        ...createQuestion("multiple_choice"),
+        scoring: "per_option",
+        options: [
+          { ...createOption("a"), correct: true },
+          { ...createOption("b"), correct: true },
+        ],
+      },
+      (q) => seen.push(q)
+    )
+
+    await typeInto('[aria-label="Points for a"]', "7")
+
+    const latest = seen.at(-1)
+    if (latest?.kind !== "multiple_choice") throw new Error("expected multiple choice")
+    expect(latest.options[0]!.points).toBe(7)
+    // The second answer is still blank, so it adds nothing.
+    expect(latest.points).toBe(7)
+  })
+
+  it("multiple choice re-totals as answers are marked correct", async () => {
+    const seen: Question[] = []
+    await mount(
+      withDerivedPoints({
+        ...createQuestion("multiple_choice"),
+        pointsPerCorrect: 5,
+        options: [{ ...createOption("a"), correct: true }, createOption("b")],
+      }),
+      (q) => seen.push(q)
+    )
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(`[aria-label='Mark "b" as correct']`)!
+        .click()
+    })
+
+    expect(seen.at(-1)?.points).toBe(10)
+  })
+
+  it("fill in the blank gets the same scoring block, in its own words", async () => {
+    await mount(createQuestion("fill_in_blank"))
+
+    expect(text()).toContain("SCORING")
+    expect(text()).toContain("Same for each")
+    expect(text()).toContain("Per blank")
+    expect(labels()).toContain("Points per blank")
+    expect(text()).toContain("Worth 1 point")
+    expect(text()).toContain("across 1 blank")
+  })
+
+  it("fill in the blank prices every blank, not a correct subset", async () => {
+    await mount({
+      ...createQuestion("fill_in_blank"),
+      scoring: "per_option",
+      blanks: [
+        { ...createBlank(), acceptedAnswers: ["helium"], points: 2 },
+        { ...createBlank(), acceptedAnswers: ["neon"] },
+      ],
+    })
+
+    expect(labels()).toContain("Points for blank 1")
+    expect(labels()).toContain("Points for blank 2")
+    // The unfilled one is flagged where it sits, not saved up for publish.
+    expect(
+      container
+        .querySelector('[aria-label="Points for blank 2"]')!
+        .getAttribute("aria-invalid")
+    ).toBe("true")
+  })
+
+  it("fill in the blank re-totals as a blank is added", async () => {
+    const seen: Question[] = []
+    await mount(
+      withDerivedPoints({
+        ...createQuestion("fill_in_blank"),
+        pointsPerCorrect: 4,
+      }),
+      (q) => seen.push(q)
+    )
+
+    const addButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Add blank")
+    )
+    await act(async () => addButton!.click())
+
+    expect(seen.at(-1)?.points).toBe(8)
+  })
+
+  it("fill in the blank refuses to step its points", async () => {
+    await mount(createQuestion("fill_in_blank"))
+
+    const up = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Increase points"]'
+    )!
+    expect(up.disabled).toBe(true)
   })
 
   it("essay offers word bounds and says it is graded by hand", async () => {

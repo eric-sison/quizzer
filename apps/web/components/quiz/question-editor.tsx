@@ -6,6 +6,9 @@ import {
   toPlainText,
   isImageContentType,
   MAX_IMAGE_BYTES,
+  isSplitScored,
+  MAX_QUESTION_POINTS,
+  questionPoints,
   type Question,
   type QuestionKind,
   type QuestionOfKind,
@@ -28,7 +31,6 @@ import { TeacherOnlyDocEditor } from "@/components/quiz/teacher-only-doc-editor"
 import { uploadQuestionImageAction } from "@/lib/quiz-actions"
 import { typeDef } from "@/lib/quiz/types/registry"
 
-const MAX_POINTS = 1000
 
 /**
  * The shell around one question.
@@ -151,7 +153,11 @@ export function QuestionEditor({
 
       <div className="flex flex-wrap items-center gap-5 border-t pt-4">
         <PointsStepper
-          value={question.points}
+          value={questionPoints(question)}
+          // Split-scored kinds derive their total from the scoring block
+          // above, so there is nothing to step here - the stepper shows the
+          // result and says where it comes from.
+          derived={isSplitScored(question)}
           onChange={(points) => onChange({ ...question, points })}
         />
 
@@ -199,20 +205,29 @@ function AnswerSection({
 
 function PointsStepper({
   value,
+  derived,
   onChange,
 }: {
   value: number
+  /** Computed elsewhere: show the total, refuse to step it. */
+  derived: boolean
   onChange: (points: number) => void
 }) {
   return (
     <div className="flex items-center gap-2.5">
       <span className="text-xs text-muted-foreground">Points</span>
-      <div className="flex items-center rounded-lg border">
+      <div
+        className="flex items-center rounded-lg border data-derived:bg-muted/40"
+        data-derived={derived || undefined}
+        title={
+          derived ? "Added up from the per-answer scoring above" : undefined
+        }
+      >
         <Button
           variant="ghost"
           size="icon-sm"
           aria-label="Decrease points"
-          disabled={value <= 0}
+          disabled={derived || value <= 0}
           onClick={() => onChange(Math.max(0, value - 1))}
         >
           <Minus />
@@ -222,12 +237,17 @@ function PointsStepper({
           variant="ghost"
           size="icon-sm"
           aria-label="Increase points"
-          disabled={value >= MAX_POINTS}
-          onClick={() => onChange(Math.min(MAX_POINTS, value + 1))}
+          disabled={derived || value >= MAX_QUESTION_POINTS}
+          onClick={() => onChange(Math.min(MAX_QUESTION_POINTS, value + 1))}
         >
           <Plus />
         </Button>
       </div>
+      {derived ? (
+        <span className="text-[11px] text-muted-foreground">
+          total across all correct answers
+        </span>
+      ) : null}
     </div>
   )
 }
