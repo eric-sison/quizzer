@@ -8,7 +8,7 @@
 import type { AnswerKey } from "../answer-key"
 import type { Issue, IssueSeverity } from "../issue"
 import type { ManifestQuestion, ManifestChoice } from "../manifest"
-import type { QuestionKind, QuestionOfKind } from "../question"
+import { questionPoints, type QuestionKind, type QuestionOfKind } from "../question"
 import { hasFormatting, isRichDocEmpty, toPlainText, type RichDoc } from "../rich-text"
 
 export type QuestionLogic<K extends QuestionKind> = {
@@ -60,7 +60,9 @@ export function baseManifest(
     kind: q.kind,
     prompt: toPlainText(q.promptDoc),
     choices,
-    points: q.points,
+    // Derived for multiple_choice, authored for everything else - see
+    // `questionPoints`. The manifest must carry the total the teacher sees.
+    points: questionPoints(q),
     required: q.required,
     // Choice kinds override from their own flag; the rest have nothing to shuffle.
     shuffle_options: false,

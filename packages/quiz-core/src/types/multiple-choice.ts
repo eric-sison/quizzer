@@ -1,6 +1,7 @@
 import { isRichDocEmpty } from "../rich-text"
 import { correctOptions, optionChoices, validateOptions } from "./choice"
 import { baseManifest, issue, type QuestionLogic } from "./logic"
+import { scoringIssues } from "./scoring"
 
 export const multipleChoiceLogic: QuestionLogic<"multiple_choice"> = {
   kind: "multiple_choice",
@@ -19,7 +20,11 @@ export const multipleChoiceLogic: QuestionLogic<"multiple_choice"> = {
       issues.push(
         issue(q.id, "options", "no_correct_option", "Mark at least one option as correct.")
       )
-    } else if (correct.length === q.options.length && q.options.length > 0) {
+    }
+
+    issues.push(...scoringIssues(q))
+
+    if (correct.length > 0 && correct.length === q.options.length) {
       // Legitimate, but almost always a mis-click. Warn, never block.
       issues.push(
         issue(

@@ -242,6 +242,31 @@ describe("the new kinds project without their answers", () => {
     expect(projected.blank_count).toBe(3)
   })
 
+  it("keeps the ordering rule off the wire, in both settings", () => {
+    for (const blankOrder of ["in_order", "any_order"] as const) {
+      const q = fillInBlank("q ___ ___", [["a"], ["b"]], { blankOrder })
+      const projected = project("quiz-1", { ...sampleQuiz(), questions: [q] })
+        .questions[0]!
+
+      // Grading policy, not presentation: the client submits positionally
+      // either way, so the manifest has no reason to carry it.
+      expect(projected).not.toHaveProperty("blankOrder")
+      expect(projected).not.toHaveProperty("blank_order")
+    }
+  })
+
+  it("carries the ordering rule into the answer key", () => {
+    const q = fillInBlank("q ___ ___", [["a"], ["b"]], { blankOrder: "any_order" })
+    const key = extractKey({ ...sampleQuiz(), questions: [q] })
+
+    expect(key.keys[q.id]).toEqual({
+      kind: "fill_in_blank",
+      acceptedAnswers: [["a"], ["b"]],
+      caseSensitive: false,
+      blankOrder: "any_order",
+    })
+  })
+
   it("matching presents right items in id order, distractors indistinguishable", () => {
     const q = matching(
       "q",
@@ -288,6 +313,7 @@ describe("the new kinds project without their answers", () => {
       kind: "fill_in_blank",
       acceptedAnswers: [["hydrogen", "H"], ["oxygen", "O"]],
       caseSensitive: false,
+      blankOrder: "in_order",
     })
     const matchingDoc = doc.questions.find((q) => q.kind === "matching")!
     if (matchingDoc.kind !== "matching") throw new Error("unreachable")

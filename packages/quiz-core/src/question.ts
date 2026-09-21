@@ -26,11 +26,20 @@ export const QUESTION_KINDS = [
 
 export type QuestionKind = (typeof QUESTION_KINDS)[number]
 
+/** The ceiling on any one question's award, and on any single part of it. */
+export const MAX_QUESTION_POINTS = 1000
+
 const baseQuestionFields = {
   id: z.string().min(1).max(64),
   // May carry image nodes, referenced by opaque media id - see rich-text.ts.
   promptDoc: richDocSchema,
-  points: z.number().int().min(0).max(1000),
+  /**
+   * What the question is worth. Authored directly for most kinds; for
+   * multiple_choice it is DERIVED from the per-answer scoring below, which is
+   * why the editor shows it read-only there. `questionPoints()` is the one
+   * place that knows the difference - read through it rather than this field.
+   */
+  points: z.number().int().min(0).max(MAX_QUESTION_POINTS),
   required: z.boolean(),
   /**
    * Teacher-only notes on the intended answer ("why the answer is B"). Never
@@ -43,6 +52,13 @@ export const choiceOptionSchema = z.strictObject({
   id: z.string().min(1).max(64),
   labelDoc: richDocSchema,
   correct: z.boolean(),
+  /**
+   * What THIS option is worth, read only by multiple_choice under
+   * `per_option` scoring. Optional because nothing else awards per option -
+   * and kept, not stripped, when a question moves to single_choice or to
+   * uniform scoring, so that flipping back restores what was typed.
+   */
+  points: z.number().int().min(0).max(MAX_QUESTION_POINTS).optional(),
 })
 
 export const trueFalseQuestionSchema = z.strictObject({
@@ -58,8 +74,36 @@ export const singleChoiceQuestionSchema = z.strictObject({
   shuffleOptions: z.boolean(),
 })
 
+/**
+ * How a question splits its award across its scored parts: one flat rate for
+ * every part, or a value typed on each of them.
+ *
+ * `per_option` is the stored spelling for both kinds that use this. It predates
+ * the reuse, and renaming it now would make every saved draft fail to parse
+ * for the sake of a word; a blank is simply the "option" being priced there.
+ */
+export const scoringModeSchema = z.enum(["uniform", "per_option"])
+
+/**
+ * Shared by the kinds whose award is DERIVED rather than typed: multiple
+ * choice, which splits across the answers marked correct, and fill in the
+ * blank, which splits across the blanks. Both are defaulted rather than
+ * required, because quizzes authored before per-part scoring existed are still
+ * in the database and a required key would make every one of them fail to
+ * parse. A doc arriving without them reads as the flat rate it effectively was.
+ */
+const splitScoringFields = {
+  scoring: scoringModeSchema.default("uniform"),
+  /**
+   * The flat rate under `uniform` scoring. Kept while `per_option` is selected
+   * so switching back does not lose it.
+   */
+  pointsPerCorrect: z.number().int().min(0).max(MAX_QUESTION_POINTS).default(1),
+}
+
 export const multipleChoiceQuestionSchema = z.strictObject({
   ...baseQuestionFields,
+  ...splitScoringFields,
   kind: z.literal("multiple_choice"),
   options: z.array(choiceOptionSchema).max(50),
   shuffleOptions: z.boolean(),
@@ -89,13 +133,35 @@ export const blankSchema = z.strictObject({
   id: z.string().min(1).max(64),
   /** Matching ANY entry counts as right. Grading data, never projected. */
   acceptedAnswers: z.array(z.string().max(200)).max(20),
+  /**
+   * What THIS blank is worth, read only under `per_option` scoring - the same
+   * arrangement as a choice option's value, and kept for the same reason when
+   * the flat rate is showing.
+   */
+  points: z.number().int().min(0).max(MAX_QUESTION_POINTS).optional(),
 })
+
+/**
+ * Whether a response has to land in the blank it was written for.
+ *
+ * `in_order` grades positionally: response 1 against blank 1, and a student
+ * who knows every answer but types them in the wrong boxes gets nothing.
+ * `any_order` accepts a response that matches ANY blank, which suits a prompt
+ * like "name the three noble gases" where the boxes are a set, not a sequence.
+ */
+export const blankOrderSchema = z.enum(["in_order", "any_order"])
 
 export const fillInBlankQuestionSchema = z.strictObject({
   ...baseQuestionFields,
+  ...splitScoringFields,
   kind: z.literal("fill_in_blank"),
   blanks: z.array(blankSchema).max(50),
   caseSensitive: z.boolean(),
+  /**
+   * Defaulted, not required: quizzes authored before this existed are graded
+   * positionally, which is what they were written against.
+   */
+  blankOrder: blankOrderSchema.default("in_order"),
 })
 
 export const matchPairSchema = z.strictObject({
@@ -166,11 +232,13 @@ export const quizDocSchema = z.strictObject({
 })
 
 export type ChoiceOption = z.infer<typeof choiceOptionSchema>
+export type ScoringMode = z.infer<typeof scoringModeSchema>
 export type TrueFalseQuestion = z.infer<typeof trueFalseQuestionSchema>
 export type SingleChoiceQuestion = z.infer<typeof singleChoiceQuestionSchema>
 export type MultipleChoiceQuestion = z.infer<typeof multipleChoiceQuestionSchema>
 export type NumericQuestion = z.infer<typeof numericQuestionSchema>
 export type Blank = z.infer<typeof blankSchema>
+export type BlankOrder = z.infer<typeof blankOrderSchema>
 export type FillInBlankQuestion = z.infer<typeof fillInBlankQuestionSchema>
 export type MatchPair = z.infer<typeof matchPairSchema>
 export type MatchDistractor = z.infer<typeof matchDistractorSchema>
@@ -221,11 +289,16 @@ export function createQuestion<K extends QuestionKind>(kind: K): QuestionOfKind<
         shuffleOptions: false,
       } as QuestionOfKind<K>
     case "multiple_choice":
+      // points 0, not 1: it is derived, and a fresh question has nothing
+      // marked correct yet. Marking the first answer makes it worth 1.
       return {
         ...base,
         kind: "multiple_choice",
+        points: 0,
         options: [createOption(), createOption()],
         shuffleOptions: false,
+        scoring: "uniform",
+        pointsPerCorrect: 1,
       } as QuestionOfKind<K>
     case "numeric":
       // No correctValue key: undefined means "not set yet", and strictObject
@@ -237,6 +310,10 @@ export function createQuestion<K extends QuestionKind>(kind: K): QuestionOfKind<
         kind: "fill_in_blank",
         blanks: [createBlank()],
         caseSensitive: false,
+        blankOrder: "in_order",
+        // One blank at the default rate, which is what `base` already says.
+        scoring: "uniform",
+        pointsPerCorrect: 1,
       } as QuestionOfKind<K>
     case "matching":
       return {
@@ -258,6 +335,70 @@ export function createQuestion<K extends QuestionKind>(kind: K): QuestionOfKind<
       throw new Error(`unknown question kind: ${String(exhaustive)}`)
     }
   }
+}
+
+/**
+ * The kinds whose award is derived from their parts rather than typed on the
+ * question. Adding a third would mean adding it here and to `scoredParts`.
+ */
+export type SplitScoredQuestion = MultipleChoiceQuestion | FillInBlankQuestion
+
+export function isSplitScored(question: Question): question is SplitScoredQuestion {
+  return question.kind === "multiple_choice" || question.kind === "fill_in_blank"
+}
+
+/** One part that earns points, at its position in the question's own array. */
+export type ScoredPart = { index: number; points: number | undefined }
+
+/**
+ * The parts of a question that earn points.
+ *
+ * The two kinds differ in which parts count: a multiple-choice question only
+ * awards for the options marked correct, while every blank is scored - there
+ * is no unscored blank to filter out. The index comes back with each part
+ * because a validator reporting one has to name its row, and filtered
+ * positions would otherwise not survive the trip.
+ */
+export function scoredParts(question: SplitScoredQuestion): ScoredPart[] {
+  if (question.kind === "fill_in_blank") {
+    return question.blanks.map((blank, index) => ({ index, points: blank.points }))
+  }
+  return question.options.flatMap((option, index) =>
+    option.correct ? [{ index, points: option.points }] : []
+  )
+}
+
+/**
+ * The award to show and to project, for any kind.
+ *
+ * Read points through this rather than `question.points`: a split-scored
+ * question authored before per-part scoring carries a stored total that no
+ * longer follows from its parts, and deriving here means such a question reads
+ * correctly without first having to be edited and re-saved.
+ *
+ * Clamped, because fifty parts at the per-part ceiling would otherwise exceed
+ * what `points` accepts and make the document unsavable.
+ */
+export function questionPoints(question: Question): number {
+  if (!isSplitScored(question)) return question.points
+
+  const parts = scoredParts(question)
+  const total =
+    question.scoring === "uniform"
+      ? parts.length * question.pointsPerCorrect
+      : parts.reduce((sum, part) => sum + (part.points ?? 0), 0)
+  return Math.min(total, MAX_QUESTION_POINTS)
+}
+
+/**
+ * Write the derived total back into `points`, so the stored document agrees
+ * with what the editor shows. Every edit to a split-scored question's parts or
+ * scoring goes through here; returns the same object when nothing moved, so it
+ * cannot by itself make a clean draft look dirty.
+ */
+export function withDerivedPoints<Q extends SplitScoredQuestion>(question: Q): Q {
+  const points = questionPoints(question)
+  return points === question.points ? question : { ...question, points }
 }
 
 export function createQuizDoc(title = ""): QuizDoc {
