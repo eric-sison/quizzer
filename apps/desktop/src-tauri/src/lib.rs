@@ -61,6 +61,7 @@ pub fn run() {
         .menu(build_app_menu)
         .invoke_handler(tauri::generate_handler![
             commands::validate_link,
+            commands::preview_link,
             commands::start_session,
             commands::save_answer,
             commands::submit_exam,
@@ -231,8 +232,20 @@ fn spawn_heartbeat(handle: tauri::AppHandle) {
                     });
 
                     if hb.revoked {
-                        let _ = handle.emit(event::STATE, state.session.snapshot());
+                        if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                            commands::end_revoked_session(&state, &window);
+                        }
+                        continue;
                     }
+                }
+                // The server currently reports revocation as a 403 on the call
+                // itself rather than via the `revoked` flag; both roads lead to
+                // the same place: this session is over, by proctor decision.
+                Err(error::AppError::Revoked) => {
+                    if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                        commands::end_revoked_session(&state, &window);
+                    }
+                    continue;
                 }
                 Err(_) => {
                     state.events.record(kind::HEARTBEAT_MISSED, None);

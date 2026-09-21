@@ -44,6 +44,11 @@ export const examManifestSchema = z.strictObject({
   title: z.string(),
   duration_s: z.number().int().min(1),
   allow_backtracking: z.boolean(),
+  /**
+   * Defaulted rather than required so manifests published before this field
+   * existed still parse. Exam configuration, not an answer: it may ship.
+   */
+  shuffle_questions: z.boolean().default(false),
   questions: z.array(manifestQuestionSchema),
 })
 

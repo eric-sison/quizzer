@@ -12,6 +12,7 @@ import * as React from "react"
 import {
   getSessionState,
   onLockdown,
+  onRevoked,
   onStrike,
   onSubmitted,
   onTimeUp,
@@ -122,7 +123,11 @@ export function useExamSession() {
 
         // The session ending mid-answer is not a save failure - it's a change
         // of phase, and the student needs the corresponding screen.
-        if (error.code === "expired" || error.code === "already_submitted") {
+        if (
+          error.code === "expired" ||
+          error.code === "already_submitted" ||
+          error.code === "revoked"
+        ) {
           setState((s) => ({ ...s, screen: "error", error }))
           return
         }
@@ -223,6 +228,14 @@ export function useExamSession() {
     track(onTimeUp(() => setState((s) => ({ ...s, remaining: 0 }))))
 
     track(onLockdown((lockdown) => setState((s) => ({ ...s, lockdown }))))
+
+    track(
+      onRevoked((error) => {
+        // Rust has already released the lockdown and dropped the session;
+        // all that is left is telling the student why the exam ended.
+        setState((s) => ({ ...s, screen: "error", error }))
+      })
+    )
 
     return () => {
       cancelled = true

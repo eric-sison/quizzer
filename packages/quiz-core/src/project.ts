@@ -79,6 +79,7 @@ export function project(quizId: string, doc: QuizDoc): ExamManifest {
     title: doc.title,
     duration_s: doc.settings.durationS,
     allow_backtracking: doc.settings.allowBacktracking,
+    shuffle_questions: doc.settings.shuffleQuestions,
     questions: doc.questions.map(questionToManifest),
   }
 

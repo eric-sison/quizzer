@@ -149,6 +149,72 @@ afterAll(async () => {
   await sqlClient.end()
 })
 
+describe("POST /api/exam/preview", () => {
+  async function previewExam(token: string) {
+    return app.request("/api/exam/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
+  }
+
+  it("shows the configuration and nothing else - no questions, no credential", async () => {
+    const link = await publishedQuiz(600)
+
+    const res = await previewExam(link.token)
+    expect(res.status).toBe(200)
+    const preview = (await res.json()) as Record<string, unknown>
+
+    expect(Object.keys(preview).sort()).toEqual([
+      "allow_backtracking",
+      "duration_s",
+      "question_count",
+      "shuffle_questions",
+      "title",
+    ])
+    expect(preview).toMatchObject({
+      title: "Exam surface",
+      duration_s: 600,
+      question_count: 3,
+      shuffle_questions: false,
+    })
+  })
+
+  it("claims nothing: previewing does not create a session", async () => {
+    const link = await publishedQuiz()
+
+    await previewExam(link.token)
+
+    const rows = await db
+      .select({ id: examSessions.id })
+      .from(examSessions)
+      .where(eq(examSessions.token, link.token))
+    expect(rows).toHaveLength(0)
+  })
+
+  it("gives the same verdicts as a session claim for a dead link", async () => {
+    const unknown = await previewExam("aaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toMatchObject({ error: { code: "invalid_token" } })
+
+    const link = await publishedQuiz()
+    const quizzes = (await (
+      await app.request("/api/quizzes", { headers: teacherHeaders() })
+    ).json()) as { id: string; token: string | null }[]
+    const quiz = quizzes.find((q) => q.token === link.token)
+    if (!quiz) throw new Error("published quiz not in the list")
+
+    await app.request(`/api/quizzes/${quiz.id}/unpublish`, {
+      method: "POST",
+      headers: teacherHeaders(),
+    })
+
+    const revoked = await previewExam(link.token)
+    expect(revoked.status).toBe(403)
+    expect(await revoked.json()).toMatchObject({ error: { code: "revoked" } })
+  })
+})
+
 describe("POST /api/exam/session", () => {
   it("hands back a credential, the manifest and both clocks", async () => {
     const { session } = await sitting()

@@ -12,7 +12,9 @@ import { randomUUID } from "node:crypto"
 
 import type {
   AnswerValue,
+  ExamManifest,
   HeartbeatResponse,
+  PreviewExamResponse,
   ProctorEventPayload,
   Receipt,
   StartSessionResponse,
@@ -33,18 +35,14 @@ import { epochSeconds, signExamToken } from "../lib/exam-token"
 import type { ExamSessionContext } from "../lib/hono"
 
 /**
- * Claim a session from a pasted link.
- *
- * Unauthenticated by necessity: this call is how a client gets its credential.
- * The token is the only thing standing in front of it, which is why it is 192
- * bits of randomness and why nothing here reveals whether a given token exists
- * beyond the one code it returns.
+ * Token → the active published version, with every way a link can be dead
+ * mapped to its own code. Shared by the session claim and the pre-flight
+ * preview so the two can never disagree about whether a link works.
  */
-export async function startSession(
+async function resolveActiveVersion(
   token: string,
-  clientVersion: string,
-  platform: string
-): Promise<StartSessionResponse> {
+  now: Date
+): Promise<{ token: string; versionId: string; manifest: ExamManifest }> {
   const [link] = await db
     .select({
       token: examLinks.token,
@@ -65,7 +63,6 @@ export async function startSession(
     throw new ApiError("revoked", 403, "This exam was closed by your teacher.")
   }
 
-  const now = new Date()
   if (link.opensAt && link.opensAt.getTime() > now.getTime()) {
     throw new ApiError("not_yet_open", 403, "This exam has not opened yet.")
   }
@@ -85,6 +82,42 @@ export async function startSession(
     throw new ApiError("invalid_token", 404, "This link does not work.")
   }
 
+  return { token: link.token, versionId: version.id, manifest: version.manifest }
+}
+
+/**
+ * The exam's configuration, for the link-entry screen. Deliberately not the
+ * manifest: no questions, no credential, no session row. A student reading
+ * this has committed to nothing.
+ */
+export async function previewExam(token: string): Promise<PreviewExamResponse> {
+  const { manifest } = await resolveActiveVersion(token, new Date())
+
+  return {
+    title: manifest.title,
+    duration_s: manifest.duration_s,
+    allow_backtracking: manifest.allow_backtracking,
+    shuffle_questions: manifest.shuffle_questions ?? false,
+    question_count: manifest.questions.length,
+  }
+}
+
+/**
+ * Claim a session from a pasted link.
+ *
+ * Unauthenticated by necessity: this call is how a client gets its credential.
+ * The token is the only thing standing in front of it, which is why it is 192
+ * bits of randomness and why nothing here reveals whether a given token exists
+ * beyond the one code it returns.
+ */
+export async function startSession(
+  token: string,
+  clientVersion: string,
+  platform: string
+): Promise<StartSessionResponse> {
+  const now = new Date()
+  const version = await resolveActiveVersion(token, now)
+
   const expiresAt = new Date(now.getTime() + version.manifest.duration_s * 1_000)
 
   // `versionId` is written once, here, and never updated. This one column is
@@ -93,8 +126,8 @@ export async function startSession(
   const [session] = await db
     .insert(examSessions)
     .values({
-      token: link.token,
-      versionId: version.id,
+      token: version.token,
+      versionId: version.versionId,
       expiresAt,
       clientVersion,
       platform,

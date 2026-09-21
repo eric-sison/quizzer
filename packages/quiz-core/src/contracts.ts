@@ -30,6 +30,9 @@ export const API_ERROR_CODES = [
   "not_found",
   "conflict",
   "validation_failed",
+  // media uploads
+  "unsupported_media_type",
+  "payload_too_large",
   // shared
   "server_error",
 ] as const
@@ -135,6 +138,23 @@ export const startSessionRequestSchema = z.strictObject({
   platform: z.string().max(32),
 })
 
+/**
+ * Pre-flight look at an exam's configuration, shown on the link-entry screen
+ * before the student commits to lockdown. Token-authorised like a session
+ * claim, but claims nothing: no session row, no credential, no questions.
+ */
+export const previewExamRequestSchema = z.strictObject({
+  token: z.string().min(16).max(128),
+})
+
+export const previewExamResponseSchema = z.strictObject({
+  title: z.string(),
+  duration_s: z.number().int().min(1),
+  allow_backtracking: z.boolean(),
+  shuffle_questions: z.boolean(),
+  question_count: z.number().int().min(0),
+})
+
 export const startSessionResponseSchema = z.strictObject({
   session_jwt: z.string(),
   exam: examManifestSchema,
@@ -186,6 +206,8 @@ export const receiptSchema = z.strictObject({
 
 export type StartSessionRequest = z.infer<typeof startSessionRequestSchema>
 export type StartSessionResponse = z.infer<typeof startSessionResponseSchema>
+export type PreviewExamRequest = z.infer<typeof previewExamRequestSchema>
+export type PreviewExamResponse = z.infer<typeof previewExamResponseSchema>
 export type SaveAnswerRequest = z.infer<typeof saveAnswerRequestSchema>
 export type HeartbeatRequest = z.infer<typeof heartbeatRequestSchema>
 export type HeartbeatResponse = z.infer<typeof heartbeatResponseSchema>

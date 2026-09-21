@@ -2,8 +2,13 @@ import * as React from "react"
 import { Loader2, ShieldCheck } from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
-import { quitApp, validateLink } from "@/lib/ipc"
-import { toAppError, type AppError, type LinkInfo } from "@/lib/types"
+import { previewLink, quitApp, validateLink } from "@/lib/ipc"
+import {
+  toAppError,
+  type AppError,
+  type LinkInfo,
+  type LinkPreview,
+} from "@/lib/types"
 
 type LinkEntryProps = {
   onBegin: (link: string) => void
@@ -15,31 +20,43 @@ type LinkEntryProps = {
 export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
   const [value, setValue] = React.useState("")
   const [info, setInfo] = React.useState<LinkInfo | null>(null)
+  const [preview, setPreview] = React.useState<LinkPreview | null>(null)
+  const [previewError, setPreviewError] = React.useState<string | null>(null)
   const [localError, setLocalError] = React.useState<string | null>(null)
 
-  // Validate as they type, but entirely offline - this never contacts the
-  // server, it only checks the link's shape and origin.
+  // Validate as they type - entirely offline, checking only the link's shape
+  // and origin. Once that passes, ask the server (through Rust) for the exam's
+  // configuration, so the student sees what they are about to start before
+  // committing to lockdown.
   React.useEffect(() => {
     const raw = value.trim()
-    if (!raw) {
-      setInfo(null)
-      setLocalError(null)
-      return
-    }
+    setInfo(null)
+    setPreview(null)
+    setPreviewError(null)
+    setLocalError(null)
+    if (!raw) return
 
     let cancelled = false
     const timer = window.setTimeout(async () => {
       try {
         const result = await validateLink(raw)
-        if (!cancelled) {
-          setInfo(result)
-          setLocalError(null)
-        }
+        if (cancelled) return
+        setInfo(result)
       } catch (raw_) {
-        if (!cancelled) {
-          setInfo(null)
-          setLocalError(toAppError(raw_).message)
-        }
+        if (!cancelled) setLocalError(toAppError(raw_).message)
+        return
+      }
+
+      try {
+        const config = await previewLink(raw)
+        if (!cancelled) setPreview(config)
+      } catch (raw_) {
+        if (cancelled) return
+        const appError = toAppError(raw_)
+        // A dead network must not block starting - the preview is a courtesy.
+        // A verdict about this link (revoked, expired, not open yet) is worth
+        // hearing before the student presses Begin.
+        if (!appError.retryable) setPreviewError(appError.message)
       }
     }, 250)
 
@@ -92,6 +109,12 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
             <p id="quiz-link-error" role="alert" className="text-sm text-destructive">
               {message}
             </p>
+          ) : previewError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {previewError}
+            </p>
+          ) : preview ? (
+            <ExamConfigCard preview={preview} />
           ) : info ? (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <ShieldCheck className="size-4" aria-hidden />
@@ -128,5 +151,49 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
         </div>
       </div>
     </main>
+  )
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} h ${rest} min` : `${hours} h`
+}
+
+/**
+ * What the student is about to sit, before they commit to lockdown: the exam's
+ * configuration, never its questions - the server does not reveal those until
+ * a session is claimed.
+ */
+function ExamConfigCard({ preview }: { preview: LinkPreview }) {
+  const { exam } = preview
+  const rows: Array<[string, string]> = [
+    ["Questions", String(exam.question_count)],
+    ["Time limit", formatDuration(exam.duration_s)],
+    ["Going back", exam.allow_backtracking ? "Allowed" : "Not allowed"],
+    ["Question order", exam.shuffle_questions ? "Shuffled" : "As written"],
+  ]
+
+  return (
+    <div className="rounded-lg border bg-muted/30 p-4">
+      <p className="text-sm font-medium">{exam.title}</p>
+
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+        {rows.map(([label, valueText]) => (
+          <React.Fragment key={label}>
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd>{valueText}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <ShieldCheck className="size-3.5" aria-hidden />
+        Ready to connect to <span className="font-mono">{preview.host}</span>{" "}
+        (exam {preview.token_preview})
+      </p>
+    </div>
   )
 }

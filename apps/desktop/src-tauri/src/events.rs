@@ -35,6 +35,7 @@ pub mod kind {
     pub const BLOCKED_SHORTCUT: &str = "blocked_shortcut";
     pub const CLOCK_TAMPERING: &str = "clock_tampering";
     pub const HEARTBEAT_MISSED: &str = "heartbeat_missed";
+    pub const SESSION_REVOKED: &str = "session_revoked";
 }
 
 #[derive(Default)]
