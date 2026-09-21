@@ -1,0 +1,73 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+description = "Quizzer secure exam client"
+authors = ["Eric Sison"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# All networking lives in Rust. The webview is never granted network access,
+# so there is deliberately no tauri-plugin-http here.
+# native-tls, not the default rustls stack: it uses schannel on Windows and
+# Security.framework on macOS, so it needs no C toolchain to build (the default
+# drags in aws-lc-sys, which breaks cross-compilation) and it trusts the OS
+# certificate store - which is what a school running a private CA needs.
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "native-tls",
+  "http2",
+  "charset",
+] }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-app-kit = { version = "0.3", features = [
+  "NSApplication",
+  "NSResponder",
+  "NSRunningApplication",
+] }
+objc2-foundation = "0.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+] }
+
+[features]
+# Serves the exam contract from an in-process fixture instead of the network.
+# Never enable for a real exam build.
+mock-api = []
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+# `test` brings in Tauri's mock runtime so the commands can be driven through
+# the real IPC path rather than called as plain functions.
+tauri = { version = "2", features = ["test"] }
