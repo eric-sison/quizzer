@@ -6,32 +6,21 @@
  * types, because the backend never sends one. Grading happens server-side.
  */
 
-export type QuestionKind =
-  | "single_choice"
-  | "multiple_choice"
-  | "short_text"
-  | "true_false"
-
-export type Choice = {
-  id: string
-  label: string
-}
-
-export type Question = {
-  id: string
-  kind: QuestionKind
-  prompt: string
-  choices: Choice[]
-  points: number
-}
-
-export type ExamManifest = {
-  id: string
-  title: string
-  duration_s: number
-  questions: Question[]
-  allow_backtracking: boolean
-}
+/**
+ * The manifest comes straight from @workspace/quiz-core, which is the
+ * TypeScript source of truth the Rust structs mirror by hand. Redeclaring it
+ * here would give the webview a third copy to drift from.
+ *
+ * `Question["kind"]` therefore does not include the `unsupported` variant Rust
+ * degrades unknown kinds to; quiz-ui renders any kind it does not recognise as
+ * a plain notice, which covers the same case without widening the shared type.
+ */
+export type {
+  ExamManifest,
+  ManifestChoice as Choice,
+  ManifestQuestion as Question,
+  QuestionKind,
+} from "@workspace/quiz-core"
 
 export type Receipt = {
   receipt_id: string
@@ -42,12 +31,12 @@ export type Receipt = {
 export type Phase = "idle" | "active" | "submitted"
 
 /** An answer value: a choice id, a list of them, or free text. */
-export type AnswerValue = string | string[]
+export type { AnswerValue } from "@workspace/quiz-core"
 
 export type SessionSnapshot = {
   phase: Phase
-  manifest: ExamManifest | null
-  answers: Record<string, AnswerValue>
+  manifest: import("@workspace/quiz-core").ExamManifest | null
+  answers: Record<string, import("@workspace/quiz-core").AnswerValue>
   remaining_s: number
   strikes: number
   receipt: Receipt | null

@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Loader2, ShieldCheck } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@workspace/ui/components/button"
 import { quitApp, validateLink } from "@/lib/ipc"
 import { toAppError, type AppError, type LinkInfo } from "@/lib/types"
 

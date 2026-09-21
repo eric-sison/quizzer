@@ -14,6 +14,10 @@ export default defineConfig(() => ({
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
     },
+    // @workspace/ui and @workspace/quiz-ui are symlinked workspace packages
+    // with their own react dependency. Without this, Vite can resolve two
+    // copies of React and hooks inside shared components fail at runtime.
+    dedupe: ["react", "react-dom"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

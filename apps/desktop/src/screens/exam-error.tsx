@@ -1,6 +1,6 @@
 import { AlertCircle } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@workspace/ui/components/button"
 import type { AppError, ErrorCode } from "@/lib/types"
 
 /**

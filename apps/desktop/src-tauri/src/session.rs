@@ -127,14 +127,24 @@ fn is_valid_token(token: &str) -> bool {
 pub enum QuestionKind {
     SingleChoice,
     MultipleChoice,
-    ShortText,
     TrueFalse,
+    Essay,
+    /// Any kind this build predates.
+    ///
+    /// Without this, a quiz published with a newer question type fails to
+    /// deserialise and takes the *whole paper* down for a student running an
+    /// older client. With it, they lose one question and can sit the rest.
+    #[serde(other)]
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Choice {
     pub id: String,
     pub label: String,
+    /// Formatted label, when the plain text above would lose something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_doc: Option<serde_json::Value>,
 }
 
 /// A question as the *student* sees it. Note the absence of any correct-answer
@@ -144,11 +154,24 @@ pub struct Choice {
 pub struct Question {
     pub id: String,
     pub kind: QuestionKind,
+    /// Plain text, always populated, so a client that ignores `prompt_doc`
+    /// still renders something correct.
     pub prompt: String,
+    /// Constrained ProseMirror JSON. Passed through to the webview as opaque
+    /// data: Rust does not interpret it, and `packages/quiz-ui` maps it to
+    /// React elements rather than to an HTML string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_doc: Option<serde_json::Value>,
     #[serde(default)]
     pub choices: Vec<Choice>,
     #[serde(default)]
     pub points: u32,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_words: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_words: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,5 +366,234 @@ mod tests {
         assert!(parse_link("").is_err());
         assert!(parse_link("not a url").is_err());
         assert!(parse_link("javascript:alert(1)").is_err());
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    /// A manifest from a server that already speaks a newer dialect.
+    fn future_manifest() -> serde_json::Value {
+        serde_json::json!({
+            "id": "quiz-1",
+            "title": "Midterm",
+            "duration_s": 2700,
+            "allow_backtracking": true,
+            "questions": [
+                {
+                    "id": "q1",
+                    "kind": "essay",
+                    "prompt": "Explain photosynthesis.",
+                    "choices": [],
+                    "points": 4,
+                    "required": true,
+                    "min_words": 20,
+                    "max_words": 200
+                },
+                {
+                    "id": "q2",
+                    "kind": "matching",
+                    "prompt": "Pair each term with its definition.",
+                    "choices": [],
+                    "points": 3,
+                    "required": false
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn a_question_type_this_build_predates_does_not_take_the_paper_down() {
+        let manifest: ExamManifest =
+            serde_json::from_value(future_manifest()).expect("a newer kind must still parse");
+
+        assert_eq!(manifest.questions.len(), 2);
+        assert!(matches!(manifest.questions[0].kind, QuestionKind::Essay));
+        // The student loses one question, not the whole exam.
+        assert!(matches!(manifest.questions[1].kind, QuestionKind::Unsupported));
+    }
+
+    #[test]
+    fn essay_limits_survive_the_round_trip() {
+        let manifest: ExamManifest = serde_json::from_value(future_manifest()).unwrap();
+        let essay = &manifest.questions[0];
+
+        assert_eq!(essay.min_words, Some(20));
+        assert_eq!(essay.max_words, Some(200));
+        assert!(essay.required);
+    }
+
+    #[test]
+    fn a_manifest_without_the_newer_fields_still_parses() {
+        // What an older published version looks like: no prompt_doc, no
+        // required, no word limits.
+        let older = serde_json::json!({
+            "id": "quiz-1",
+            "title": "Midterm",
+            "duration_s": 600,
+            "questions": [
+                { "id": "q1", "kind": "true_false", "prompt": "True?",
+                  "choices": [{ "id": "true", "label": "True" }] }
+            ]
+        });
+
+        let manifest: ExamManifest = serde_json::from_value(older).expect("must parse");
+        let q = &manifest.questions[0];
+
+        assert!(q.prompt_doc.is_none());
+        assert!(q.min_words.is_none());
+        assert!(!q.required);
+        assert!(manifest.questions[0].choices[0].label_doc.is_none());
+    }
+
+    #[test]
+    fn a_prompt_doc_is_carried_through_untouched() {
+        // Rust does not interpret it. It is handed to the webview, where
+        // packages/quiz-ui maps the nodes to React elements.
+        let with_doc = serde_json::json!({
+            "id": "quiz-1",
+            "title": "Midterm",
+            "duration_s": 600,
+            "questions": [{
+                "id": "q1",
+                "kind": "essay",
+                "prompt": "Bold word.",
+                "prompt_doc": {
+                    "type": "doc",
+                    "content": [{
+                        "type": "paragraph",
+                        "content": [
+                            { "type": "text", "text": "Bold", "marks": [{ "type": "bold" }] },
+                            { "type": "text", "text": " word." }
+                        ]
+                    }]
+                },
+                "choices": [],
+                "points": 1
+            }]
+        });
+
+        let manifest: ExamManifest = serde_json::from_value(with_doc.clone()).unwrap();
+        let doc = manifest.questions[0].prompt_doc.as_ref().expect("prompt_doc kept");
+
+        assert_eq!(doc, &with_doc["questions"][0]["prompt_doc"]);
+    }
+
+    /// A real response from `POST /api/exam/session`, captured against a
+    /// running apps/api and checked in. Hand-written fixtures only ever confirm
+    /// what their author already believed about the shape; this one caught the
+    /// backend's actual field names, casing and optionality.
+    ///
+    /// Regenerate it by publishing a quiz with all four question kinds and
+    /// saving the session response, with `session_jwt` redacted.
+    const REAL_SESSION_RESPONSE: &str =
+        include_str!("../tests/fixtures/session-response.json");
+
+    #[derive(Debug, serde::Deserialize)]
+    struct StartSessionBody {
+        #[allow(dead_code)]
+        session_jwt: String,
+        exam: ExamManifest,
+        #[allow(dead_code)]
+        server_time: u64,
+        expires_at: u64,
+    }
+
+    #[test]
+    fn the_backends_real_response_still_fits_these_structs() {
+        let body: StartSessionBody = serde_json::from_str(REAL_SESSION_RESPONSE)
+            .expect("apps/api and these structs have drifted");
+
+        assert_eq!(body.exam.questions.len(), 4);
+        assert!(body.expires_at > 0);
+        assert!(body.exam.allow_backtracking);
+
+        let kinds: Vec<_> = body
+            .exam
+            .questions
+            .iter()
+            .map(|q| match q.kind {
+                QuestionKind::TrueFalse => "true_false",
+                QuestionKind::SingleChoice => "single_choice",
+                QuestionKind::MultipleChoice => "multiple_choice",
+                QuestionKind::Essay => "essay",
+                QuestionKind::Unsupported => "unsupported",
+            })
+            .collect();
+
+        // Nothing fell through to Unsupported: every kind the authoring app can
+        // publish today is one this build renders.
+        assert_eq!(
+            kinds,
+            ["true_false", "single_choice", "multiple_choice", "essay"]
+        );
+    }
+
+    #[test]
+    fn the_real_response_carries_formatting_and_essay_limits() {
+        let body: StartSessionBody = serde_json::from_str(REAL_SESSION_RESPONSE).unwrap();
+
+        let formatted = body
+            .exam
+            .questions
+            .iter()
+            .find(|q| q.prompt_doc.is_some())
+            .expect("the fixture includes a formatted prompt");
+        assert!(!formatted.prompt.is_empty(), "plain text must always be populated");
+
+        let essay = body
+            .exam
+            .questions
+            .iter()
+            .find(|q| matches!(q.kind, QuestionKind::Essay))
+            .expect("the fixture includes an essay");
+        assert_eq!(essay.min_words, Some(20));
+        assert_eq!(essay.max_words, Some(200));
+    }
+
+    #[test]
+    fn the_real_response_carries_no_answer_key() {
+        // The same guarantee as the IPC test, one layer earlier: checked
+        // against what the server actually sent, not against a fixture we wrote.
+        for forbidden in [
+            "\"correct\"",
+            "correct_option_id",
+            "correct_option_ids",
+            "answer_key",
+            "rubric",
+        ] {
+            assert!(
+                !REAL_SESSION_RESPONSE.contains(forbidden),
+                "the backend sent `{forbidden}`"
+            );
+        }
+    }
+
+    #[test]
+    fn the_question_struct_has_nowhere_to_put_an_answer() {
+        // Even handed one, it does not land: deserialising ignores unknown
+        // fields, and serialising back out cannot invent them.
+        let hostile = serde_json::json!({
+            "id": "quiz-1",
+            "title": "Midterm",
+            "duration_s": 600,
+            "questions": [{
+                "id": "q1",
+                "kind": "single_choice",
+                "prompt": "Pick one.",
+                "choices": [{ "id": "a", "label": "7", "correct": true }],
+                "points": 1,
+                "correct_option_id": "a",
+                "answer_key": { "q1": "a" }
+            }]
+        });
+
+        let manifest: ExamManifest = serde_json::from_value(hostile).unwrap();
+        let out = serde_json::to_string(&manifest).unwrap();
+
+        for forbidden in ["correct", "answer_key", "correct_option_id"] {
+            assert!(!out.contains(forbidden), "leaked `{forbidden}`: {out}");
+        }
     }
 }

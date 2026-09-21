@@ -1,6 +1,6 @@
 import { CheckCircle2 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@workspace/ui/components/button"
 import { quitApp } from "@/lib/ipc"
 
 import type { Receipt } from "@/lib/types"

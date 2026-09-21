@@ -160,6 +160,23 @@ fn choice(id: &str, label: &str) -> Choice {
     Choice {
         id: id.to_string(),
         label: label.to_string(),
+        label_doc: None,
+    }
+}
+
+/// Keeps the fixture readable now that Question has optional fields the mock
+/// has no opinion about.
+fn question(id: &str, kind: QuestionKind, prompt: &str, choices: Vec<Choice>, points: u32) -> Question {
+    Question {
+        id: id.to_string(),
+        kind,
+        prompt: prompt.to_string(),
+        prompt_doc: None,
+        choices,
+        points,
+        required: true,
+        min_words: None,
+        max_words: None,
     }
 }
 
@@ -170,45 +187,47 @@ fn fixture_exam(duration_s: u64) -> ExamManifest {
         duration_s,
         allow_backtracking: true,
         questions: vec![
-            Question {
-                id: "q1".to_string(),
-                kind: QuestionKind::SingleChoice,
-                prompt: "Which organelle is primarily responsible for photosynthesis?"
-                    .to_string(),
-                choices: vec![
+            question(
+                "q1",
+                QuestionKind::SingleChoice,
+                "Which organelle is primarily responsible for photosynthesis?",
+                vec![
                     choice("a", "Mitochondrion"),
                     choice("b", "Chloroplast"),
                     choice("c", "Ribosome"),
                     choice("d", "Golgi apparatus"),
                 ],
-                points: 2,
-            },
-            Question {
-                id: "q2".to_string(),
-                kind: QuestionKind::TrueFalse,
-                prompt: "Photosynthesis releases oxygen as a by-product.".to_string(),
-                choices: vec![choice("true", "True"), choice("false", "False")],
-                points: 1,
-            },
-            Question {
-                id: "q3".to_string(),
-                kind: QuestionKind::MultipleChoice,
-                prompt: "Select every input required by the light-dependent reactions."
-                    .to_string(),
-                choices: vec![
+                2,
+            ),
+            question(
+                "q2",
+                QuestionKind::TrueFalse,
+                "Photosynthesis releases oxygen as a by-product.",
+                vec![choice("true", "True"), choice("false", "False")],
+                1,
+            ),
+            question(
+                "q3",
+                QuestionKind::MultipleChoice,
+                "Select every input required by the light-dependent reactions.",
+                vec![
                     choice("a", "Water"),
                     choice("b", "Light energy"),
                     choice("c", "Glucose"),
                     choice("d", "NADP+"),
                 ],
-                points: 3,
-            },
+                3,
+            ),
             Question {
-                id: "q4".to_string(),
-                kind: QuestionKind::ShortText,
-                prompt: "In one sentence, explain the role of chlorophyll.".to_string(),
-                choices: vec![],
-                points: 4,
+                min_words: Some(20),
+                max_words: Some(120),
+                ..question(
+                    "q4",
+                    QuestionKind::Essay,
+                    "In one sentence, explain the role of chlorophyll.",
+                    vec![],
+                    4,
+                )
             },
         ],
     }

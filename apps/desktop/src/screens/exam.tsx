@@ -1,14 +1,17 @@
 import * as React from "react"
-import { AlertTriangle, CloudOff, Lock, Timer } from "lucide-react"
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  CloudOff,
+  Lock,
+  Timer,
+} from "lucide-react"
+import { QuestionView } from "@workspace/quiz-ui"
 
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import type {
-  AnswerValue,
-  LockdownReport,
-  Question,
-  SessionSnapshot,
-} from "@/lib/types"
+import { Button } from "@workspace/ui/components/button"
+import { cn } from "@workspace/ui/lib/utils"
+import type { AnswerValue, LockdownReport, SessionSnapshot } from "@/lib/types"
 
 type ExamProps = {
   snapshot: SessionSnapshot
@@ -47,23 +50,27 @@ export function Exam({
   onDismissStrike,
 }: ExamProps) {
   const manifest = snapshot.manifest
+  const [at, setAt] = React.useState(0)
   const [confirming, setConfirming] = React.useState(false)
 
   if (!manifest) return null
 
+  const total = manifest.questions.length
+  const question = manifest.questions[at]
   const answered = manifest.questions.filter(
     (q) => snapshot.answers[q.id] !== undefined
   ).length
   const urgent = remaining <= 300
+  const last = at >= total - 1
 
   return (
-    <div className="flex min-h-svh flex-col">
+    <div className="flex h-svh flex-col">
       <ExamHeader
         title={manifest.title}
         remaining={remaining}
         urgent={urgent}
         answered={answered}
-        total={manifest.questions.length}
+        total={total}
         lockdown={lockdown}
         strikes={strikes}
       />
@@ -76,64 +83,135 @@ export function Exam({
         />
       ) : null}
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-8">
-        <ol className="flex flex-col gap-8">
-          {manifest.questions.map((question, index) => (
-            <li key={question.id}>
-              <QuestionCard
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-10">
+          {question ? (
+            <>
+              {/* The same component the teacher's preview renders, so what they
+                  checked before publishing is what a student sits. */}
+              <QuestionView
+                key={question.id}
                 question={question}
-                index={index}
-                value={snapshot.answers[question.id]}
-                unsaved={unsaved.has(question.id)}
-                onAnswer={onAnswer}
+                index={at}
+                total={total}
+                answer={{
+                  value: snapshot.answers[question.id],
+                  onChange: (value) => onAnswer(question.id, value),
+                }}
               />
-            </li>
-          ))}
-        </ol>
 
-        <div className="mt-10 flex flex-col gap-3 border-t border-border pt-6">
-          {unsaved.size > 0 ? (
-            <p className="flex items-center gap-1.5 text-sm text-destructive">
-              <CloudOff className="size-4" aria-hidden />
-              {unsaved.size} answer{unsaved.size === 1 ? "" : "s"} couldn&apos;t
-              be saved. Check the network before submitting.
-            </p>
-          ) : null}
-
-          {confirming ? (
-            <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
-              <p className="text-sm">
-                Submit your exam? You&apos;ve answered{" "}
-                <strong>
-                  {answered} of {manifest.questions.length}
-                </strong>{" "}
-                questions. This cannot be undone.
-              </p>
-              <div className="flex gap-2">
-                <Button size="lg" disabled={submitting} onClick={onSubmit}>
-                  {submitting ? "Submitting…" : "Yes, submit"}
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  disabled={submitting}
-                  onClick={() => setConfirming(false)}
-                >
-                  Keep working
-                </Button>
-              </div>
-            </div>
+              {unsaved.has(question.id) ? (
+                <p className="flex items-center gap-1.5 text-xs text-destructive">
+                  <CloudOff className="size-3.5" aria-hidden />
+                  This answer is not saved yet. It is being retried.
+                </p>
+              ) : null}
+            </>
           ) : (
-            <Button
-              size="lg"
-              className="self-start"
-              onClick={() => setConfirming(true)}
-            >
-              Submit exam
-            </Button>
+            <p className="text-sm text-muted-foreground">
+              This exam has no questions. Tell your teacher.
+            </p>
           )}
         </div>
       </main>
+
+      <footer className="shrink-0 border-t border-border">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 px-6 py-4">
+          {confirming ? (
+            <SubmitConfirmation
+              answered={answered}
+              total={total}
+              unsaved={unsaved.size}
+              submitting={submitting}
+              onSubmit={onSubmit}
+              onCancel={() => setConfirming(false)}
+            />
+          ) : (
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="lg"
+                disabled={at === 0 || !manifest.allow_backtracking}
+                onClick={() => setAt((i) => Math.max(0, i - 1))}
+              >
+                <ChevronLeft aria-hidden />
+                Previous
+              </Button>
+
+              <span className="text-xs text-muted-foreground" aria-live="polite">
+                Question {at + 1} of {total}
+                {manifest.allow_backtracking ? "" : ", you cannot go back"}
+              </span>
+
+              <div className="flex-1" />
+
+              {last ? (
+                <Button size="lg" onClick={() => setConfirming(true)}>
+                  Submit exam
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  onClick={() => setAt((i) => Math.min(total - 1, i + 1))}
+                >
+                  Next
+                  <ChevronRight aria-hidden />
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+/**
+ * Submitting is the one irreversible thing a student can do here, so it states
+ * what they are about to leave behind: unanswered questions, and anything that
+ * has not reached the server.
+ */
+function SubmitConfirmation({
+  answered,
+  total,
+  unsaved,
+  submitting,
+  onSubmit,
+  onCancel,
+}: {
+  answered: number
+  total: number
+  unsaved: number
+  submitting: boolean
+  onSubmit: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
+      <p className="text-sm">
+        Submit your exam? You have answered{" "}
+        <strong>
+          {answered} of {total}
+        </strong>{" "}
+        questions. This cannot be undone.
+      </p>
+
+      {unsaved > 0 ? (
+        <p className="flex items-center gap-1.5 text-sm text-destructive">
+          <CloudOff className="size-4" aria-hidden />
+          {unsaved} answer{unsaved === 1 ? "" : "s"} still being retried. Wait for
+          the network if you can.
+        </p>
+      ) : null}
+
+      <div className="flex gap-2">
+        <Button size="lg" disabled={submitting} onClick={onSubmit}>
+          {submitting ? "Submitting…" : "Yes, submit"}
+        </Button>
+        <Button size="lg" variant="outline" disabled={submitting} onClick={onCancel}>
+          Keep working
+        </Button>
+      </div>
     </div>
   )
 }
@@ -262,122 +340,3 @@ function StrikeBanner({
   )
 }
 
-function QuestionCard({
-  question,
-  index,
-  value,
-  unsaved,
-  onAnswer,
-}: {
-  question: Question
-  index: number
-  value: AnswerValue | undefined
-  unsaved: boolean
-  onAnswer: (questionId: string, value: AnswerValue) => void
-}) {
-  return (
-    <article
-      className={cn(
-        "rounded-lg border border-border p-5",
-        unsaved && "border-destructive/50"
-      )}
-    >
-      <div className="mb-4 flex items-baseline gap-3">
-        <span className="font-mono text-xs text-muted-foreground">
-          {String(index + 1).padStart(2, "0")}
-        </span>
-        <div className="flex-1">
-          {/* Prompts are plain text from the API and rendered as text - never
-              as HTML - so a malicious prompt cannot inject markup. */}
-          <p className="text-sm leading-relaxed">{question.prompt}</p>
-        </div>
-        {question.points > 0 ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {question.points} pt{question.points === 1 ? "" : "s"}
-          </span>
-        ) : null}
-      </div>
-
-      <AnswerInput question={question} value={value} onAnswer={onAnswer} />
-
-      {unsaved ? (
-        <p className="mt-3 text-xs text-destructive">Not saved yet - retrying.</p>
-      ) : null}
-    </article>
-  )
-}
-
-function AnswerInput({
-  question,
-  value,
-  onAnswer,
-}: {
-  question: Question
-  value: AnswerValue | undefined
-  onAnswer: (questionId: string, value: AnswerValue) => void
-}) {
-  if (question.kind === "short_text") {
-    return (
-      <textarea
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onAnswer(question.id, e.currentTarget.value)}
-        rows={4}
-        className="w-full resize-y rounded-lg border border-input bg-background p-3 text-sm outline-none select-text focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-        placeholder="Type your answer…"
-      />
-    )
-  }
-
-  if (question.kind === "multiple_choice") {
-    const selected = Array.isArray(value) ? value : []
-    return (
-      <fieldset className="flex flex-col gap-2">
-        <legend className="sr-only">Select all that apply</legend>
-        {question.choices.map((choice) => (
-          <label
-            key={choice.id}
-            className="flex cursor-pointer items-center gap-3 rounded-lg border border-input px-3 py-2.5 text-sm hover:bg-muted has-checked:border-ring has-checked:bg-muted"
-          >
-            <input
-              type="checkbox"
-              name={question.id}
-              value={choice.id}
-              checked={selected.includes(choice.id)}
-              onChange={(e) => {
-                const next = e.currentTarget.checked
-                  ? [...selected, choice.id]
-                  : selected.filter((id) => id !== choice.id)
-                onAnswer(question.id, next)
-              }}
-              className="size-4 accent-primary"
-            />
-            {choice.label}
-          </label>
-        ))}
-      </fieldset>
-    )
-  }
-
-  // single_choice and true_false share the radio presentation.
-  return (
-    <fieldset className="flex flex-col gap-2">
-      <legend className="sr-only">Select one answer</legend>
-      {question.choices.map((choice) => (
-        <label
-          key={choice.id}
-          className="flex cursor-pointer items-center gap-3 rounded-lg border border-input px-3 py-2.5 text-sm hover:bg-muted has-checked:border-ring has-checked:bg-muted"
-        >
-          <input
-            type="radio"
-            name={question.id}
-            value={choice.id}
-            checked={value === choice.id}
-            onChange={() => onAnswer(question.id, choice.id)}
-            className="size-4 accent-primary"
-          />
-          {choice.label}
-        </label>
-      ))}
-    </fieldset>
-  )
-}
