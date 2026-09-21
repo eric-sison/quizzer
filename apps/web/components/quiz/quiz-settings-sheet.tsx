@@ -40,7 +40,12 @@ export function QuizSettingsSheet({
     <Sheet>
       <SheetTrigger
         render={
-          <Button variant="outline" size="icon" aria-label="Quiz settings" />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Quiz settings"
+            title="Quiz settings"
+          />
         }
       >
         <Settings2 />
