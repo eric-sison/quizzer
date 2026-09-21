@@ -1,0 +1,195 @@
+/**
+ * Request and response shapes for `apps/api`.
+ *
+ * Both sides import these: Hono validates incoming bodies with them, and
+ * `apps/web`'s api-client types its calls off them, so a route and its caller
+ * cannot drift.
+ */
+import { z } from "zod"
+
+import { answerValueSchema, examManifestSchema } from "./manifest"
+import { quizDocSchema } from "./question"
+
+/**
+ * Error codes. The exam-surface entries must match `AppError::from_server_code`
+ * in apps/desktop/src-tauri/src/error.rs - note it expects `invalid_token`, and
+ * collapses anything it does not recognise to `server_error`, which leaves the
+ * student with a useless message.
+ */
+export const API_ERROR_CODES = [
+  // exam surface (desktop)
+  "invalid_token",
+  "expired",
+  "already_submitted",
+  "not_yet_open",
+  "revoked",
+  "session_conflict",
+  // teacher surface (web)
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "conflict",
+  "validation_failed",
+  // shared
+  "server_error",
+] as const
+
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number]
+
+export const apiErrorSchema = z.strictObject({
+  error: z.strictObject({
+    code: z.enum(API_ERROR_CODES),
+    message: z.string().optional(),
+    /** Present on `validation_failed`, so the editor can link each issue. */
+    issues: z
+      .array(
+        z.strictObject({
+          questionId: z.string().nullable(),
+          field: z.string(),
+          severity: z.enum(["error", "warning"]),
+          code: z.string(),
+          message: z.string(),
+        })
+      )
+      .optional(),
+  }),
+})
+
+export const quizStatusSchema = z.enum(["draft", "published", "archived"])
+export type QuizStatus = z.infer<typeof quizStatusSchema>
+
+/** Row shape for the quiz list. Deliberately excludes the draft document. */
+export const quizSummarySchema = z.strictObject({
+  id: z.string(),
+  title: z.string(),
+  status: quizStatusSchema,
+  questionCount: z.number().int().min(0),
+  durationS: z.number().int().min(0),
+  updatedAt: z.string(),
+  publishedAt: z.string().nullable(),
+  versionNo: z.number().int().nullable(),
+  hasUnpublishedChanges: z.boolean(),
+  token: z.string().nullable(),
+  url: z.string().nullable(),
+})
+
+export const quizDetailSchema = z.strictObject({
+  id: z.string(),
+  status: quizStatusSchema,
+  doc: quizDocSchema,
+  docVersion: z.number().int().min(0),
+  hasUnpublishedChanges: z.boolean(),
+  token: z.string().nullable(),
+  url: z.string().nullable(),
+})
+
+export const createQuizRequestSchema = z.strictObject({
+  title: z.string().max(200).optional(),
+})
+
+export const saveDraftRequestSchema = z.strictObject({
+  doc: quizDocSchema,
+  /** The version this edit was based on. A mismatch is a 409, never a clobber. */
+  docVersion: z.number().int().min(0),
+})
+
+export const saveDraftResponseSchema = z.strictObject({
+  docVersion: z.number().int().min(0),
+  updatedAt: z.string(),
+})
+
+export const publishResponseSchema = z.strictObject({
+  versionNo: z.number().int().min(1),
+  token: z.string(),
+  url: z.string(),
+  publishedAt: z.string(),
+})
+
+export type ApiError = z.infer<typeof apiErrorSchema>
+export type QuizSummary = z.infer<typeof quizSummarySchema>
+export type QuizDetail = z.infer<typeof quizDetailSchema>
+export type CreateQuizRequest = z.infer<typeof createQuizRequestSchema>
+export type SaveDraftRequest = z.infer<typeof saveDraftRequestSchema>
+export type SaveDraftResponse = z.infer<typeof saveDraftResponseSchema>
+export type PublishResponse = z.infer<typeof publishResponseSchema>
+
+/**
+ * The exam surface.
+ *
+ * These shapes mirror the Rust structs in apps/desktop/src-tauri/src/api/mod.rs
+ * by hand, on purpose: Rust is the security boundary and should not import a
+ * schema it does not control. That makes drift the risk, so the names and
+ * casing here are not free choices.
+ *
+ * Two conventions worth stating because breaking either is silent:
+ *
+ *  - snake_case throughout. serde deserialises these field names literally.
+ *  - times are **epoch seconds**, not ISO strings. The client does arithmetic
+ *    on them to drive a countdown and to measure clock skew.
+ */
+const epochSeconds = z.number().int().min(0)
+
+export const startSessionRequestSchema = z.strictObject({
+  token: z.string().min(16).max(128),
+  client_version: z.string().max(64),
+  platform: z.string().max(32),
+})
+
+export const startSessionResponseSchema = z.strictObject({
+  session_jwt: z.string(),
+  exam: examManifestSchema,
+  /** The server's own clock, so the client can derive skew and not trust its own. */
+  server_time: epochSeconds,
+  expires_at: epochSeconds,
+})
+
+export const saveAnswerRequestSchema = z.strictObject({
+  question_id: z.string().min(1).max(200),
+  value: answerValueSchema,
+  /** Monotonic per session. Lets a retry that arrives late be discarded. */
+  client_seq: z.number().int().min(0),
+})
+
+export const heartbeatRequestSchema = z.strictObject({
+  elapsed_s: z.number().int().min(0),
+})
+
+export const heartbeatResponseSchema = z.strictObject({
+  expires_at: epochSeconds,
+  server_time: epochSeconds,
+  /** The teacher closed the link while this exam was running. */
+  revoked: z.boolean(),
+})
+
+export const proctorEventSchema = z.strictObject({
+  seq: z.number().int().min(0),
+  kind: z.string().min(1).max(64),
+  /** Client epoch seconds. Advisory: the server records its own receipt time. */
+  at: epochSeconds,
+  detail: z.string().max(2_000).optional(),
+})
+
+export const eventBatchRequestSchema = z.strictObject({
+  events: z.array(proctorEventSchema).max(200),
+})
+
+export const submitRequestSchema = z.strictObject({
+  /** Stable across retries, so a double submit replays one receipt. */
+  idempotency_key: z.string().min(8).max(200),
+})
+
+export const receiptSchema = z.strictObject({
+  receipt_id: z.string(),
+  submitted_at: epochSeconds,
+  question_count: z.number().int().min(0),
+})
+
+export type StartSessionRequest = z.infer<typeof startSessionRequestSchema>
+export type StartSessionResponse = z.infer<typeof startSessionResponseSchema>
+export type SaveAnswerRequest = z.infer<typeof saveAnswerRequestSchema>
+export type HeartbeatRequest = z.infer<typeof heartbeatRequestSchema>
+export type HeartbeatResponse = z.infer<typeof heartbeatResponseSchema>
+export type ProctorEventPayload = z.infer<typeof proctorEventSchema>
+export type EventBatchRequest = z.infer<typeof eventBatchRequestSchema>
+export type SubmitRequest = z.infer<typeof submitRequestSchema>
+export type Receipt = z.infer<typeof receiptSchema>
