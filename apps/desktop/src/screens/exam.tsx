@@ -7,7 +7,7 @@ import {
   Lock,
   Timer,
 } from "lucide-react"
-import { QuestionView } from "@workspace/quiz-ui"
+import { QuestionView, seededShuffle } from "@workspace/quiz-ui"
 
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
@@ -53,11 +53,24 @@ export function Exam({
   const [at, setAt] = React.useState(0)
   const [confirming, setConfirming] = React.useState(false)
 
+  // One random seed per exam sitting drives both question order and per-
+  // question option order, so navigation never reshuffles anything. Caveat: a
+  // crash-resume remounts this screen and re-seeds; SessionSnapshot exposes no
+  // session-stable field to derive from yet, and a fresh order on restart is
+  // an acceptable v1 trade.
+  const [seed] = React.useState(() => Math.random().toString(36).slice(2))
+  const questions = React.useMemo(() => {
+    if (!manifest) return []
+    return manifest.shuffle_questions
+      ? seededShuffle(manifest.questions, seed)
+      : manifest.questions
+  }, [manifest, seed])
+
   if (!manifest) return null
 
-  const total = manifest.questions.length
-  const question = manifest.questions[at]
-  const answered = manifest.questions.filter(
+  const total = questions.length
+  const question = questions[at]
+  const answered = questions.filter(
     (q) => snapshot.answers[q.id] !== undefined
   ).length
   const urgent = remaining <= 300
@@ -101,6 +114,7 @@ export function Exam({
                 // Data URIs Rust fetched at session start; the webview has no
                 // network, so an id missing here renders no image at all.
                 resolveImageSrc={(imageId) => snapshot.images[imageId]}
+                shuffleSeed={seed}
               />
 
               {unsaved.has(question.id) ? (

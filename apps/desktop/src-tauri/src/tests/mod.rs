@@ -117,6 +117,7 @@ fn previewing_a_link_shows_the_configuration_but_claims_nothing_and_leaks_nothin
         keys,
         [
             "allow_backtracking",
+            "description",
             "duration_s",
             "question_count",
             "shuffle_questions",

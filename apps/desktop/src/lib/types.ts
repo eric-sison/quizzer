@@ -55,6 +55,7 @@ export type LinkPreview = {
   token_preview: string
   exam: {
     title: string
+    description?: string
     duration_s: number
     allow_backtracking: boolean
     shuffle_questions: boolean

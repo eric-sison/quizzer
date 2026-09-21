@@ -128,6 +128,10 @@ pub enum QuestionKind {
     SingleChoice,
     MultipleChoice,
     TrueFalse,
+    Numeric,
+    FillInBlank,
+    Matching,
+    Ordering,
     Essay,
     /// Any kind this build predates.
     ///
@@ -172,6 +176,21 @@ pub struct Question {
     pub min_words: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_words: Option<u32>,
+    /// Numeric: display-only suffix beside the input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Fill-in-the-blank: how many inputs to render; answers are positional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blank_count: Option<u32>,
+    /// Matching: prompts in authored order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_items: Vec<Choice>,
+    /// Matching: pair rights plus distractors, order de-correlated server-side.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub right_items: Vec<Choice>,
+    /// Choice kinds: whether the client shuffles displayed option order.
+    #[serde(default)]
+    pub shuffle_options: bool,
 }
 
 /// Media ids referenced by `image` nodes inside the manifest's rich-text
@@ -212,7 +231,12 @@ pub fn collect_image_ids(manifest: &ExamManifest) -> Vec<String> {
         if let Some(doc) = &question.prompt_doc {
             scan(doc, &mut ids);
         }
-        for choice in &question.choices {
+        for choice in question
+            .choices
+            .iter()
+            .chain(&question.left_items)
+            .chain(&question.right_items)
+        {
             if let Some(doc) = &choice.label_doc {
                 scan(doc, &mut ids);
             }
@@ -232,6 +256,10 @@ pub struct ExamManifest {
     /// Defaulted so manifests published before the field existed still parse.
     #[serde(default)]
     pub shuffle_questions: bool,
+    /// Teacher's blurb. Shown on the link-entry preview; carried here so the
+    /// manifest round-trips without dropping it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,8 +479,8 @@ mod contract_tests {
                 },
                 {
                     "id": "q2",
-                    "kind": "matching",
-                    "prompt": "Pair each term with its definition.",
+                    "kind": "hotspot",
+                    "prompt": "Click the mitochondrion in the diagram.",
                     "choices": [],
                     "points": 3,
                     "required": false
@@ -563,7 +591,7 @@ mod contract_tests {
         let body: StartSessionBody = serde_json::from_str(REAL_SESSION_RESPONSE)
             .expect("apps/api and these structs have drifted");
 
-        assert_eq!(body.exam.questions.len(), 4);
+        assert_eq!(body.exam.questions.len(), 8);
         assert!(body.expires_at > 0);
         assert!(body.exam.allow_backtracking);
 
@@ -575,6 +603,10 @@ mod contract_tests {
                 QuestionKind::TrueFalse => "true_false",
                 QuestionKind::SingleChoice => "single_choice",
                 QuestionKind::MultipleChoice => "multiple_choice",
+                QuestionKind::Numeric => "numeric",
+                QuestionKind::FillInBlank => "fill_in_blank",
+                QuestionKind::Matching => "matching",
+                QuestionKind::Ordering => "ordering",
                 QuestionKind::Essay => "essay",
                 QuestionKind::Unsupported => "unsupported",
             })
@@ -584,7 +616,16 @@ mod contract_tests {
         // publish today is one this build renders.
         assert_eq!(
             kinds,
-            ["true_false", "single_choice", "multiple_choice", "essay"]
+            [
+                "true_false",
+                "single_choice",
+                "multiple_choice",
+                "numeric",
+                "fill_in_blank",
+                "matching",
+                "ordering",
+                "essay"
+            ]
         );
     }
 
@@ -611,6 +652,40 @@ mod contract_tests {
     }
 
     #[test]
+    fn the_real_response_carries_the_newer_kinds_data() {
+        let body: StartSessionBody = serde_json::from_str(REAL_SESSION_RESPONSE).unwrap();
+        let by_kind = |kind: fn(&QuestionKind) -> bool| {
+            body.exam
+                .questions
+                .iter()
+                .find(|q| kind(&q.kind))
+                .expect("the fixture covers every kind")
+        };
+
+        let numeric = by_kind(|k| matches!(k, QuestionKind::Numeric));
+        assert_eq!(numeric.unit.as_deref(), Some("°C"));
+
+        let blank = by_kind(|k| matches!(k, QuestionKind::FillInBlank));
+        assert_eq!(blank.blank_count, Some(2));
+
+        let matching = by_kind(|k| matches!(k, QuestionKind::Matching));
+        assert_eq!(matching.left_items.len(), 3);
+        // Pairs plus one distractor, indistinguishable from each other.
+        assert_eq!(matching.right_items.len(), 4);
+
+        let ordering = by_kind(|k| matches!(k, QuestionKind::Ordering));
+        assert_eq!(ordering.choices.len(), 4);
+
+        let shuffled = by_kind(|k| matches!(k, QuestionKind::SingleChoice));
+        assert!(shuffled.shuffle_options, "the fixture publishes one shuffled question");
+
+        assert_eq!(
+            body.exam.description.as_deref(),
+            Some("Covers every question kind this build supports.")
+        );
+    }
+
+    #[test]
     fn the_real_response_carries_no_answer_key() {
         // The same guarantee as the IPC test, one layer earlier: checked
         // against what the server actually sent, not against a fixture we wrote.
@@ -620,6 +695,12 @@ mod contract_tests {
             "correct_option_ids",
             "answer_key",
             "rubric",
+            "explanation",
+            "tolerance",
+            "accepted_",
+            "\"pairs\"",
+            "distractor",
+            "\"blanks\"",
         ] {
             assert!(
                 !REAL_SESSION_RESPONSE.contains(forbidden),

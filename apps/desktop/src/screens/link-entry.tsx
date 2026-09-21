@@ -179,6 +179,11 @@ function ExamConfigCard({ preview }: { preview: LinkPreview }) {
   return (
     <div className="rounded-lg border bg-muted/30 p-4">
       <p className="text-sm font-medium">{exam.title}</p>
+      {exam.description ? (
+        <p className="mt-1 text-xs whitespace-pre-line text-muted-foreground">
+          {exam.description}
+        </p>
+      ) : null}
 
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
         {rows.map(([label, valueText]) => (

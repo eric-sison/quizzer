@@ -1,14 +1,14 @@
 {
   "session_jwt": "<redacted: a real session token is not a fixture>",
   "exam": {
-    "id": "acc86bf6-9543-40a7-b0a5-dbc28c44eeca",
-    "title": "Image Quiz",
+    "id": "a5dc82b1-b0a4-4ca5-82d4-39c35d6563c1",
+    "title": "Contract fixture",
     "questions": [
       {
-        "id": "00000000-0000-4000-8000-00000000q001",
+        "id": "a4fa32509d99472f",
         "kind": "true_false",
         "points": 1,
-        "prompt": "The sky is blue.",
+        "prompt": "Water boils at 100C at sea level.",
         "choices": [
           {
             "id": "true",
@@ -19,21 +19,26 @@
             "label": "False"
           }
         ],
-        "required": true
+        "required": true,
+        "shuffle_options": false
       },
       {
-        "id": "00000000-0000-4000-8000-00000000q002",
+        "id": "286be5e67d0546e7",
         "kind": "single_choice",
-        "points": 2,
+        "points": 1,
         "prompt": "Pick the prime.",
         "choices": [
           {
-            "id": "00000000-0000-4000-8000-00000000o001",
+            "id": "cb9156aaae4a44c4",
             "label": "7"
           },
           {
-            "id": "00000000-0000-4000-8000-00000000o002",
+            "id": "fdcc8f639b764fa3",
             "label": "9"
+          },
+          {
+            "id": "fb05fdb94b70407e",
+            "label": "15"
           }
         ],
         "required": true,
@@ -61,53 +66,137 @@
                   "type": "text"
                 }
               ]
-            },
-            {
-              "type": "image",
-              "attrs": {
-                "alt": "A number line from 1 to 20 with primes circled",
-                "mediaId": "a41a4e67-35ac-4203-9c0f-a73edc01fc63"
-              }
             }
           ]
-        }
+        },
+        "shuffle_options": true
       },
       {
-        "id": "00000000-0000-4000-8000-00000000q003",
+        "id": "000d216481d541f4",
         "kind": "multiple_choice",
-        "points": 3,
-        "prompt": "Pick all primes.",
+        "points": 1,
+        "prompt": "Select every prime.",
         "choices": [
           {
-            "id": "00000000-0000-4000-8000-00000000o003",
+            "id": "3314d44ef47f44f3",
             "label": "7"
           },
           {
-            "id": "00000000-0000-4000-8000-00000000o004",
+            "id": "3dc70821ddec49ef",
             "label": "9"
           },
           {
-            "id": "00000000-0000-4000-8000-00000000o005",
+            "id": "74758c8b848c42a2",
             "label": "13"
           }
         ],
-        "required": true
+        "required": true,
+        "shuffle_options": false
       },
       {
-        "id": "00000000-0000-4000-8000-00000000q004",
+        "id": "b3ef1c2329af4cc0",
+        "kind": "numeric",
+        "unit": "\u00b0C",
+        "points": 1,
+        "prompt": "At what temperature does water boil, in Celsius?",
+        "choices": [],
+        "required": true,
+        "shuffle_options": false
+      },
+      {
+        "id": "341527a0835f4c83",
+        "kind": "fill_in_blank",
+        "points": 1,
+        "prompt": "Water is made of ___ and ___.",
+        "choices": [],
+        "required": true,
+        "blank_count": 2,
+        "shuffle_options": false
+      },
+      {
+        "id": "bd67c9700c6c4468",
+        "kind": "matching",
+        "points": 1,
+        "prompt": "Match each organelle to its role.",
+        "choices": [],
+        "required": true,
+        "left_items": [
+          {
+            "id": "757209579788431b",
+            "label": "Mitochondrion"
+          },
+          {
+            "id": "91f28a7eb0114ed5",
+            "label": "Chloroplast"
+          },
+          {
+            "id": "bf95ed7aec654ad2",
+            "label": "Ribosome"
+          }
+        ],
+        "right_items": [
+          {
+            "id": "023230e687884047",
+            "label": "Waste disposal"
+          },
+          {
+            "id": "33ad95a90db44aae",
+            "label": "ATP synthesis"
+          },
+          {
+            "id": "9f37d5fcff864ae0",
+            "label": "Photosynthesis"
+          },
+          {
+            "id": "d237ef85fc9a4e27",
+            "label": "Protein synthesis"
+          }
+        ],
+        "shuffle_options": false
+      },
+      {
+        "id": "9c090fa44ea64af7",
+        "kind": "ordering",
+        "points": 1,
+        "prompt": "Order the phases of mitosis.",
+        "choices": [
+          {
+            "id": "2868e8e5de3143e7",
+            "label": "Prophase"
+          },
+          {
+            "id": "b2ffe35734ca4796",
+            "label": "Metaphase"
+          },
+          {
+            "id": "d7781ab367014157",
+            "label": "Telophase"
+          },
+          {
+            "id": "e86ee1d7783a4c51",
+            "label": "Anaphase"
+          }
+        ],
+        "required": true,
+        "shuffle_options": false
+      },
+      {
+        "id": "b0fd6c7500f74fcc",
         "kind": "essay",
         "points": 5,
-        "prompt": "Explain primality.",
+        "prompt": "Explain the role of chlorophyll.",
         "choices": [],
         "required": true,
         "max_words": 200,
-        "min_words": 20
+        "min_words": 20,
+        "shuffle_options": false
       }
     ],
-    "duration_s": 600,
+    "duration_s": 2700,
+    "description": "Covers every question kind this build supports.",
     "shuffle_questions": false,
     "allow_backtracking": true
   },
-  "server_time": 1790022173,
-  "expires_at": 1790022773
+  "server_time": 1790028001,
+  "expires_at": 1790030701
 }

@@ -90,6 +90,7 @@ impl ApiClient {
         let exam = fixture_exam(duration_s);
         Ok(PreviewResponse {
             title: exam.title,
+            description: Some("Covers the light-dependent reactions.".to_string()),
             duration_s,
             allow_backtracking: exam.allow_backtracking,
             shuffle_questions: exam.shuffle_questions,
@@ -215,6 +216,11 @@ fn question(id: &str, kind: QuestionKind, prompt: &str, choices: Vec<Choice>, po
         required: true,
         min_words: None,
         max_words: None,
+        unit: None,
+        blank_count: None,
+        left_items: vec![],
+        right_items: vec![],
+        shuffle_options: false,
     }
 }
 
@@ -225,8 +231,11 @@ fn fixture_exam(duration_s: u64) -> ExamManifest {
         duration_s,
         allow_backtracking: true,
         shuffle_questions: false,
+        description: Some("Covers the light-dependent reactions.".to_string()),
         questions: vec![
             Question {
+                // Exercises the seeded display shuffle under tauri:dev:mock.
+                shuffle_options: true,
                 // The image travels inside the prompt document, as the real
                 // backend ships it: an `image` node holding only a media id.
                 prompt_doc: Some(serde_json::json!({
@@ -285,6 +294,57 @@ fn fixture_exam(duration_s: u64) -> ExamManifest {
                     4,
                 )
             },
+            Question {
+                unit: Some("°C".to_string()),
+                ..question(
+                    "q5",
+                    QuestionKind::Numeric,
+                    "At what temperature (in °C) does water boil at sea level?",
+                    vec![],
+                    2,
+                )
+            },
+            Question {
+                blank_count: Some(2),
+                ..question(
+                    "q6",
+                    QuestionKind::FillInBlank,
+                    "Photosynthesis consumes ___ and releases ___.",
+                    vec![],
+                    2,
+                )
+            },
+            Question {
+                left_items: vec![
+                    choice("l1", "Chloroplast"),
+                    choice("l2", "Mitochondrion"),
+                    choice("l3", "Ribosome"),
+                ],
+                right_items: vec![
+                    choice("r1", "ATP synthesis"),
+                    choice("r2", "Photosynthesis"),
+                    choice("r3", "Protein synthesis"),
+                    choice("r4", "Waste disposal"),
+                ],
+                ..question(
+                    "q7",
+                    QuestionKind::Matching,
+                    "Match each organelle to its role.",
+                    vec![],
+                    3,
+                )
+            },
+            question(
+                "q8",
+                QuestionKind::Ordering,
+                "Order the stages of the Calvin cycle.",
+                vec![
+                    choice("o1", "Carbon fixation"),
+                    choice("o2", "Reduction"),
+                    choice("o3", "Regeneration of RuBP"),
+                ],
+                3,
+            ),
         ],
     }
 }

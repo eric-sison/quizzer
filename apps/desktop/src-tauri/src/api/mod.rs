@@ -107,6 +107,9 @@ pub struct StartSessionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewResponse {
     pub title: String,
+    /// Teacher's blurb for the link-entry screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub duration_s: u64,
     #[serde(default)]
     pub allow_backtracking: bool,
