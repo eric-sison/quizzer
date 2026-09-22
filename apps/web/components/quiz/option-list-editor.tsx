@@ -272,23 +272,32 @@ export function OptionListEditor({
         </ul>
       </SortableList>
 
-      <div className="flex items-center gap-3 pl-6">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => emit([...options, createOption()])}
-        >
-          <Plus />
-          Add {itemNoun.toLowerCase()}
-        </Button>
-        <div className="flex-1" />
-        {footerExtra}
-        <span className="text-xs text-muted-foreground">
-          {footerHint ??
-            (selection === "one"
-              ? "Exactly one must be correct"
-              : `${correctCount} of ${options.length} marked correct`)}
-        </span>
+      {/* The footer wears an option row's box and repeats the columns that
+          lead it as empty space, so Add sits under the option text rather than
+          under the grip, and still does when there is no selection control to
+          clear. A fixed indent would have to guess one of the two. */}
+      <div className="flex items-center gap-2 border border-transparent px-1">
+        <span aria-hidden className="w-3.5 shrink-0" />
+        {selection === "none" ? null : <span aria-hidden className="w-4 shrink-0" />}
+
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => emit([...options, createOption()])}
+          >
+            <Plus />
+            Add {itemNoun.toLowerCase()}
+          </Button>
+          <div className="flex-1" />
+          {footerExtra}
+          <span className="text-xs text-muted-foreground">
+            {footerHint ??
+              (selection === "one"
+                ? "Exactly one must be correct"
+                : `${correctCount} of ${options.length} marked correct`)}
+          </span>
+        </div>
       </div>
     </div>
   )
