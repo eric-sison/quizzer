@@ -108,7 +108,10 @@ function FillInBlankEditor({
         ))}
       </ul>
 
-      <div className="flex items-center gap-3">
+      {/* Indented onto the answer column: `w-14` for the "Blank n" label plus
+          the row's `gap-2`, so Add blank starts where the responses above it
+          do rather than under their labels. */}
+      <div className="flex items-center gap-3 pl-16">
         <Button
           variant="secondary"
           size="sm"
