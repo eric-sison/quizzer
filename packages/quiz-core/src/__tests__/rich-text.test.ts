@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  CODE_LANGUAGES,
   countTextWords,
   countWords,
   hasFormatting,
   isRichDocEmpty,
+  normalizeCodeLanguage,
   richDocFromText,
   richDocSchema,
   toPlainText,
@@ -164,5 +166,52 @@ describe("helpers", () => {
         ],
       })
     ).toBe(true)
+  })
+})
+
+describe("code block languages", () => {
+  it("accepts a language it knows, in any spelling", () => {
+    for (const language of CODE_LANGUAGES) {
+      expect(normalizeCodeLanguage(language)).toBe(language)
+      expect(normalizeCodeLanguage(language.toUpperCase())).toBe(language)
+    }
+
+    // What a teacher actually types after the opening fence.
+    expect(normalizeCodeLanguage("py")).toBe("python")
+    expect(normalizeCodeLanguage("js")).toBe("javascript")
+    expect(normalizeCodeLanguage("TS")).toBe("typescript")
+    expect(normalizeCodeLanguage("c++")).toBe("cpp")
+    expect(normalizeCodeLanguage("  sh  ")).toBe("bash")
+  })
+
+  it("reads an unlabelled or unknown block as plain code", () => {
+    expect(normalizeCodeLanguage(null)).toBeNull()
+    expect(normalizeCodeLanguage(undefined)).toBeNull()
+    expect(normalizeCodeLanguage("")).toBeNull()
+    expect(normalizeCodeLanguage("brainfuck")).toBeNull()
+  })
+
+  it("still parses a document whose language this build has never heard of", () => {
+    // The opening fence has always taken any word, so drafts in the database
+    // carry names no allowlist was ever applied to. Refusing them here would
+    // make a saved quiz impossible to open over a label.
+    const doc = {
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { language: "fortran" },
+          content: [{ type: "text", text: "PRINT *, 1" }],
+        },
+      ],
+    }
+
+    const parsed = richDocSchema.parse(doc)
+    const block = parsed.content[0]!
+    if (block.type !== "codeBlock") throw new Error("wrong node")
+
+    expect(block.attrs?.language).toBe("fortran")
+    expect(normalizeCodeLanguage(block.attrs?.language)).toBeNull()
+    expect(toPlainText(parsed)).toBe("PRINT *, 1")
   })
 })

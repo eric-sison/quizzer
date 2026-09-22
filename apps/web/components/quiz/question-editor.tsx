@@ -116,7 +116,7 @@ export function QuestionEditor({
       <div className="flex flex-col gap-2.5">
         <SectionHeader
           title="Prompt"
-          hint="Bold, italic, underline, lists, code and images"
+          hint="Bold, italic, underline, lists, code blocks and images"
         />
         <RichTextEditor
           value={question.promptDoc}

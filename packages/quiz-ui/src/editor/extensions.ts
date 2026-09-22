@@ -14,7 +14,7 @@
  */
 import Bold from "@tiptap/extension-bold"
 import Code from "@tiptap/extension-code"
-import CodeBlock from "@tiptap/extension-code-block"
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight"
 import Document from "@tiptap/extension-document"
 import HardBreak from "@tiptap/extension-hard-break"
 import Italic from "@tiptap/extension-italic"
@@ -24,6 +24,7 @@ import Text from "@tiptap/extension-text"
 import Underline from "@tiptap/extension-underline"
 import { Placeholder, UndoRedo } from "@tiptap/extensions"
 
+import { lowlight } from "./highlight"
 import { QuestionImage } from "./question-image"
 
 export type RichTextOptions = {
@@ -56,11 +57,27 @@ export function richTextExtensions({
     // Images by opaque media id only - no src attribute, no parseHTML, so a
     // paste from the open web cannot smuggle one in. See question-image.ts.
     QuestionImage.configure({ resolveSrc: resolveImageSrc ?? (() => undefined) }),
-    CodeBlock.configure({
-      // No syntax highlighting, so the language attribute is dead weight that
-      // would only show up in the published payload.
-      languageClassPrefix: "",
+    // Highlighting is a decoration over the same `codeBlock` node the plain
+    // extension produced: the stored JSON is text plus a language name, so a
+    // document written before this shipped needs no migration, and one written
+    // now still renders as readable code on a client that cannot colour it.
+    CodeBlockLowlight.configure({
+      lowlight,
       exitOnTripleEnter: true,
+      /**
+       * Tab indents inside a code block instead of moving focus.
+       *
+       * The handler returns false anywhere else, so Tab still leaves the
+       * editor from ordinary text - which matters, because this is the only
+       * way a keyboard user gets out. Inside a block the way out is the arrow
+       * keys: `exitOnArrowDown`/`exitOnArrowUp` are on by default and step the
+       * caret past the block, where Tab behaves normally again.
+       */
+      enableTabIndentation: true,
+      // Two spaces rather than Tiptap's four: the prompt editor sits beside a
+      // question rail in a panel, and the student's answer editor is narrower
+      // still, so deeply nested code has less room here than in an IDE.
+      tabSize: 2,
     }),
     BulletList,
     OrderedList,

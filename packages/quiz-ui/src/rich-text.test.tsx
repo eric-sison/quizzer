@@ -144,6 +144,94 @@ describe("RichText", () => {
     expect(container.querySelector("pre code")?.textContent).toBe("SELECT 1;")
   })
 
+  describe("syntax highlighting", () => {
+    it("colours a labelled block without altering a character of it", async () => {
+      const code = "const x = 1 // note"
+      await render(
+        valid({
+          type: "doc",
+          content: [
+            {
+              type: "codeBlock",
+              attrs: { language: "javascript" },
+              content: [{ type: "text", text: code }],
+            },
+          ],
+        })
+      )
+
+      const rendered = container.querySelector("pre code")!
+      // The text a teacher typed is what a student reads; the spans only
+      // divide it up.
+      expect(rendered.textContent).toBe(code)
+      expect(rendered.querySelector(".hljs-keyword")?.textContent).toBe("const")
+      expect(rendered.querySelector(".hljs-comment")?.textContent).toBe("// note")
+    })
+
+    it("takes the language name a teacher typed after the fence", async () => {
+      await render(
+        valid({
+          type: "doc",
+          content: [
+            {
+              type: "codeBlock",
+              attrs: { language: "py" },
+              content: [{ type: "text", text: "def f():\n    return 1" }],
+            },
+          ],
+        })
+      )
+
+      expect(container.querySelector("pre code .hljs-keyword")).not.toBeNull()
+    })
+
+    it("leaves an unlabelled or unreadable block plain", async () => {
+      for (const language of [null, "fortran"]) {
+        await render(
+          valid({
+            type: "doc",
+            content: [
+              {
+                type: "codeBlock",
+                attrs: { language },
+                content: [{ type: "text", text: "PRINT *, 1" }],
+              },
+            ],
+          })
+        )
+
+        const rendered = container.querySelector("pre code")!
+        expect(rendered.textContent).toBe("PRINT *, 1")
+        expect(rendered.querySelector("span")).toBeNull()
+      }
+    })
+
+    it("still renders markup as text when the highlighter is reading HTML", async () => {
+      // The dangerous shape: content that IS markup, in the one language whose
+      // grammar is built to recognise markup. The highlighter hands back a
+      // node tree and this file turns it into elements, so the angle brackets
+      // stay characters on the screen.
+      const hostile = '<script>alert(1)</script><img src=x onerror="alert(2)">'
+      await render(
+        valid({
+          type: "doc",
+          content: [
+            {
+              type: "codeBlock",
+              attrs: { language: "html" },
+              content: [{ type: "text", text: hostile }],
+            },
+          ],
+        })
+      )
+
+      const rendered = container.querySelector("pre code")!
+      expect(rendered.querySelector("script")).toBeNull()
+      expect(rendered.querySelector("img")).toBeNull()
+      expect(rendered.textContent).toBe(hostile)
+    })
+  })
+
   describe("never produces HTML from quiz content", () => {
     it("renders markup in a prompt as the characters that were typed", async () => {
       const hostile = '<script>alert(1)</script><img src=x onerror="alert(2)">'

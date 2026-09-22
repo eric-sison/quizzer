@@ -41,11 +41,94 @@ const richParagraphSchema = z.strictObject({
   content: z.array(richInlineSchema).optional(),
 })
 
+/**
+ * The languages a code block can be highlighted in.
+ *
+ * Highlighting is applied when the block is RENDERED, from this language name
+ * and the text - the stored document holds no colour information, so a quiz
+ * re-read years later highlights with today's grammar rather than a snapshot
+ * of an old one. Every client that renders a quiz registers exactly this set;
+ * the contract test in packages/quiz-ui fails if the two lists drift.
+ */
+export const CODE_LANGUAGES = [
+  "bash",
+  "c",
+  "cpp",
+  "csharp",
+  "css",
+  "go",
+  "html",
+  "java",
+  "javascript",
+  "json",
+  "php",
+  "python",
+  "sql",
+  "typescript",
+] as const
+
+export type CodeLanguage = (typeof CODE_LANGUAGES)[number]
+
+/**
+ * What a teacher might type instead of the canonical name.
+ *
+ * Tiptap's own input rule takes whatever follows the opening fence, so a
+ * teacher who writes ```py has already named their language and should not
+ * have to notice that this list spells it "python".
+ */
+const CODE_LANGUAGE_ALIASES: Record<string, CodeLanguage> = {
+  "c#": "csharp",
+  "c++": "cpp",
+  cs: "csharp",
+  golang: "go",
+  htm: "html",
+  js: "javascript",
+  jsx: "javascript",
+  mysql: "sql",
+  node: "javascript",
+  plpgsql: "sql",
+  postgres: "sql",
+  postgresql: "sql",
+  py: "python",
+  python3: "python",
+  sh: "bash",
+  shell: "bash",
+  sqlite: "sql",
+  ts: "typescript",
+  tsx: "typescript",
+  xml: "html",
+  zsh: "bash",
+}
+
+const CODE_LANGUAGE_SET: ReadonlySet<string> = new Set(CODE_LANGUAGES)
+
+/**
+ * Resolve a stored language name to one that can be highlighted.
+ *
+ * `null` means "render this as plain code", which is the honest answer for an
+ * unrecognised name as well as for a block nobody labelled. Documents predate
+ * this list - the editor has always let a fence carry any word at all - so an
+ * unknown name must degrade rather than make a quiz fail to load.
+ */
+export function normalizeCodeLanguage(
+  value: string | null | undefined
+): CodeLanguage | null {
+  if (!value) return null
+  const lower = value.trim().toLowerCase()
+  if (CODE_LANGUAGE_SET.has(lower)) return lower as CodeLanguage
+  return CODE_LANGUAGE_ALIASES[lower] ?? null
+}
+
 const richCodeBlockSchema = z.strictObject({
   type: z.literal("codeBlock"),
-  // The editor ships no syntax highlighting, so `language` is always null. The
-  // key exists because ProseMirror always serialises a node type's attributes.
-  attrs: z.strictObject({ language: z.string().nullable() }).optional(),
+  /**
+   * Kept a free string rather than narrowed to `CodeLanguage`: an opening
+   * fence has always accepted any word, so drafts already in the database
+   * carry names this build has never heard of. Rejecting those here would
+   * make a saved quiz unopenable over a label. `normalizeCodeLanguage` decides
+   * what can actually be highlighted, at the point of rendering.
+   */
+  attrs: z.strictObject({ language: z.string().max(32).nullable() }).optional(),
   content: z.array(richTextNodeSchema).optional(),
 })
 

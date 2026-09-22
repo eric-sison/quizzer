@@ -6,10 +6,12 @@ import {
   IMAGE_CONTENT_TYPES,
   isImageContentType,
   MAX_IMAGE_BYTES,
+  normalizeCodeLanguage,
   type RichDoc,
 } from "@workspace/quiz-core"
 import {
   Bold,
+  Braces,
   Code,
   ImagePlus,
   Images,
@@ -20,11 +22,16 @@ import {
   Underline,
 } from "lucide-react"
 import { Input } from "@workspace/ui/components/input"
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@workspace/ui/components/native-select"
 import { Separator } from "@workspace/ui/components/separator"
 import { Toggle } from "@workspace/ui/components/toggle"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { richTextExtensions } from "./editor/extensions"
+import { CODE_LANGUAGE_OPTIONS } from "./editor/highlight"
 import { asRichDoc } from "./editor/rich-doc"
 
 export type UploadImageResult = { mediaId: string } | { error: string }
@@ -213,6 +220,15 @@ function Toolbar({
         pressed={editor.isActive("code")}
         onPressedChange={() => editor.chain().focus().toggleCode().run()}
       />
+      <MarkToggle
+        label="Code block"
+        icon={Braces}
+        pressed={editor.isActive("codeBlock")}
+        onPressedChange={() => editor.chain().focus().toggleCodeBlock().run()}
+      />
+      {/* Shown only with the caret inside a block, like the image description
+          field below: a language belongs to one block, not to the document. */}
+      {editor.isActive("codeBlock") ? <CodeLanguageSelect editor={editor} /> : null}
 
       {onUploadImage ? (
         <>
@@ -251,6 +267,45 @@ function Toolbar({
 
       {meta ? <div className="ml-auto pr-1">{meta}</div> : null}
     </div>
+  )
+}
+
+/**
+ * The language a code block is highlighted in.
+ *
+ * "Plain text" is a real choice rather than a placeholder - it stores null,
+ * which is what a block carries when nobody labelled it. A block whose stored
+ * language this build does not recognise shows as plain text here too, and
+ * keeps that name until a teacher picks a different one, so opening an old
+ * quiz cannot silently relabel it.
+ */
+function CodeLanguageSelect({ editor }: { editor: Editor }) {
+  const stored = editor.getAttributes("codeBlock").language as string | null | undefined
+  const language = normalizeCodeLanguage(stored) ?? ""
+
+  return (
+    <NativeSelect
+      className="ml-1"
+      size="sm"
+      aria-label="Code language"
+      title="Code language"
+      value={language}
+      onChange={(event) => {
+        const next = event.currentTarget.value
+        editor
+          .chain()
+          .focus()
+          .updateAttributes("codeBlock", { language: next === "" ? null : next })
+          .run()
+      }}
+    >
+      <NativeSelectOption value="">Plain text</NativeSelectOption>
+      {CODE_LANGUAGE_OPTIONS.map((option) => (
+        <NativeSelectOption key={option.id} value={option.id}>
+          {option.label}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
   )
 }
 

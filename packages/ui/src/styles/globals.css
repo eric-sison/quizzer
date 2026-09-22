@@ -51,6 +51,23 @@
   --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
   --sidebar-border: oklch(0.925 0.005 214.3);
   --sidebar-ring: oklch(0.723 0.014 214.4);
+
+  /*
+   * Syntax highlighting. Consumed by BOTH the Tiptap editor, where
+   * ProseMirror puts these class names on decorations as a teacher types, and
+   * packages/quiz-ui's renderer, which puts the same names on the spans a
+   * student sees. One set of rules for both is what makes the teacher's
+   * preview a real preview rather than a lookalike.
+   */
+  --syntax-comment: oklch(0.55 0.02 220);
+  --syntax-keyword: oklch(0.51 0.19 295);
+  --syntax-string: oklch(0.49 0.13 150);
+  --syntax-number: oklch(0.55 0.15 55);
+  --syntax-literal: oklch(0.55 0.15 55);
+  --syntax-title: oklch(0.5 0.15 255);
+  --syntax-type: oklch(0.52 0.12 210);
+  --syntax-variable: oklch(0.52 0.14 20);
+  --syntax-meta: oklch(0.55 0.02 220);
 }
 
 .dark {
@@ -85,6 +102,17 @@
   --sidebar-accent-foreground: oklch(0.987 0.002 197.1);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.56 0.021 213.5);
+
+  /* Lighter and less saturated: the same hues read as mud on a dark panel. */
+  --syntax-comment: oklch(0.62 0.02 220);
+  --syntax-keyword: oklch(0.78 0.13 300);
+  --syntax-string: oklch(0.8 0.13 150);
+  --syntax-number: oklch(0.82 0.12 70);
+  --syntax-literal: oklch(0.82 0.12 70);
+  --syntax-title: oklch(0.79 0.11 245);
+  --syntax-type: oklch(0.81 0.09 200);
+  --syntax-variable: oklch(0.8 0.1 25);
+  --syntax-meta: oklch(0.62 0.02 220);
 }
 
 @theme inline {
@@ -140,5 +168,68 @@
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
+  }
+
+  /*
+   * highlight.js scope names, grouped by what they mean rather than coloured
+   * one by one: a theme that named all ~40 scopes would drift from the handful
+   * of grammars the app actually registers. An unlisted scope simply inherits
+   * the code block's own colour, which is a readable default rather than a
+   * missing one.
+   */
+  .hljs-comment,
+  .hljs-quote {
+    color: var(--syntax-comment);
+    font-style: italic;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-operator,
+  .hljs-doctag {
+    color: var(--syntax-keyword);
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-addition,
+  .hljs-attribute {
+    color: var(--syntax-string);
+  }
+  .hljs-number,
+  .hljs-literal {
+    color: var(--syntax-number);
+  }
+  .hljs-title,
+  .hljs-title.class_,
+  .hljs-title.function_,
+  .hljs-section,
+  .hljs-name {
+    color: var(--syntax-title);
+  }
+  .hljs-type,
+  .hljs-built_in,
+  .hljs-class,
+  .hljs-selector-class,
+  .hljs-selector-pseudo {
+    color: var(--syntax-type);
+  }
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-attr,
+  .hljs-property,
+  .hljs-symbol,
+  .hljs-selector-id,
+  .hljs-deletion {
+    color: var(--syntax-variable);
+  }
+  .hljs-meta,
+  .hljs-comment .hljs-doctag,
+  .hljs-punctuation {
+    color: var(--syntax-meta);
+  }
+  .hljs-emphasis {
+    font-style: italic;
+  }
+  .hljs-strong {
+    font-weight: 600;
   }
 }

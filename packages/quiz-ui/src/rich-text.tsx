@@ -8,6 +8,8 @@ import type {
   RichTextNode,
 } from "@workspace/quiz-core"
 
+import { HighlightedCode } from "./editor/highlight-react"
+
 /**
  * Renders a quiz prompt.
  *
@@ -83,7 +85,16 @@ function Block({
     case "codeBlock":
       return (
         <pre className="my-0 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-[0.85em] leading-relaxed">
-          <code>{(block.content ?? []).map((node) => node.text).join("")}</code>
+          {/* Colour comes from the language name plus the text, resolved here
+              rather than stored: nothing in the document decides what a
+              student's screen paints. A block whose language this build does
+              not know renders as plain code. */}
+          <code>
+            <HighlightedCode
+              code={(block.content ?? []).map((node) => node.text).join("")}
+              language={block.attrs?.language}
+            />
+          </code>
         </pre>
       )
 
