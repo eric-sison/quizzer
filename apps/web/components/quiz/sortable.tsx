@@ -40,6 +40,19 @@ export function SortableList({
   onReorder: (id: string, toIndex: number) => void
   children: React.ReactNode
 }) {
+  /**
+   * Named so the server and the client agree on the name.
+   *
+   * Left to itself dnd-kit numbers each context off a module-level counter
+   * ("DndDescribedBy-0", "-1", ...) that starts wherever the last mount left
+   * it. That counter sits at a different number on the server than in a
+   * browser that has already rendered other lists, so the `aria-describedby`
+   * it puts on every handle arrives mismatched and React reports a hydration
+   * error. `useId` is stable across the two renders by construction, which is
+   * the property the counter lacks.
+   */
+  const id = React.useId()
+
   const sensors = useSensors(
     // Without a small threshold a click on the handle registers as a drag of
     // zero distance, which cancels the row's own click handling.
@@ -59,6 +72,7 @@ export function SortableList({
 
   return (
     <DndContext
+      id={id}
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={[restrictToVerticalAxis, restrictToParentElement]}
