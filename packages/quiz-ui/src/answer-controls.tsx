@@ -271,7 +271,12 @@ function FillInBlankAnswer({
   }
 
   return (
-    <div className="flex max-w-md flex-col gap-2.5">
+    // Full width, unlike the numeric box above: a blank takes a phrase, and
+    // how much room it is given is a hint about how much is wanted. A box that
+    // stops halfway across the column suggests a short answer whether or not
+    // one was asked for, and a long response scrolling inside a narrow field
+    // is the version a student cannot read back before submitting.
+    <div className="flex flex-col gap-2.5">
       {Array.from({ length: count }, (_, index) => {
         /**
          * A single blank needs no heading: the prompt already says what goes
