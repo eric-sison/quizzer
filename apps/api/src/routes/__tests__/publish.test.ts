@@ -94,6 +94,35 @@ async function publishableQuiz(title = "Biology Midterm"): Promise<QuizDetail> {
   return (await after.json()) as QuizDetail
 }
 
+/** Re-save the draft with an opening time (or clear it), then read it back. */
+async function setOpensAt(quiz: QuizDetail, opensAt: string | undefined) {
+  const settings = { ...quiz.doc.settings }
+  if (opensAt) settings.opensAt = opensAt
+  else delete settings.opensAt
+
+  const res = await app.request(`/api/quizzes/${quiz.id}/draft`, {
+    method: "PUT",
+    headers: headers(owner),
+    body: JSON.stringify({
+      doc: { ...quiz.doc, settings },
+      docVersion: quiz.docVersion,
+    }),
+  })
+  expect(res.status).toBe(200)
+
+  const after = await app.request(`/api/quizzes/${quiz.id}`, { headers: headers(owner) })
+  return (await after.json()) as QuizDetail
+}
+
+async function linkRow(token: string) {
+  const [row] = await db
+    .select({ opensAt: examLinks.opensAt })
+    .from(examLinks)
+    .where(eq(examLinks.token, token))
+  if (!row) throw new Error("no link row")
+  return row
+}
+
 async function publish(quizId: string, teacherId = owner) {
   return app.request(`/api/quizzes/${quizId}/publish`, {
     method: "POST",
@@ -433,5 +462,52 @@ describe("the published manifest itself", () => {
     const keys = Object.values(version.answerKey.keys)
     expect(keys.some((k) => k?.kind === "true_false")).toBe(true)
     expect(keys.some((k) => k?.kind === "single_choice")).toBe(true)
+  })
+})
+
+describe("the opening time", () => {
+  it("reaches the link, so the server can refuse a link nobody may open yet", async () => {
+    const quiz = await publishableQuiz("Opens later")
+    const opensAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const withTime = await setOpensAt(quiz, opensAt)
+
+    const res = await publish(withTime.id)
+    expect(res.status).toBe(200)
+    const published = (await res.json()) as PublishResponse
+
+    // Authored on the draft, enforced on the link: the column the exam surface
+    // reads is the one that has to end up carrying it.
+    const row = await linkRow(published.token)
+    expect(row.opensAt?.toISOString()).toBe(opensAt)
+  })
+
+  it("leaves the link open when the quiz opens as soon as it is published", async () => {
+    const quiz = await publishableQuiz("Opens now")
+
+    const res = await publish(quiz.id)
+    const published = (await res.json()) as PublishResponse
+
+    expect((await linkRow(published.token)).opensAt).toBeNull()
+  })
+
+  it("re-applies on republish, in both directions", async () => {
+    const quiz = await publishableQuiz("Moves")
+    const opensAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+
+    const withTime = await setOpensAt(quiz, opensAt)
+    const first = (await (await publish(withTime.id)).json()) as PublishResponse
+    expect((await linkRow(first.token)).opensAt).not.toBeNull()
+
+    // Changing your mind is publishing again. The token is the same one
+    // students already have, so clearing the time has to clear the column
+    // rather than leave a link that stays shut.
+    const reopened = await app.request(`/api/quizzes/${quiz.id}`, {
+      headers: headers(owner),
+    })
+    const cleared = await setOpensAt((await reopened.json()) as QuizDetail, undefined)
+    const second = (await (await publish(cleared.id)).json()) as PublishResponse
+
+    expect(second.token).toBe(first.token)
+    expect((await linkRow(second.token)).opensAt).toBeNull()
   })
 })

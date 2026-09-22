@@ -114,7 +114,12 @@ export async function publishQuiz(
 
     if (!version) throw new Error("publish inserted no version")
 
-    const token = await ensureToken(tx, quizId)
+    // The opening time is authored in the draft and takes effect here, on the
+    // link, because that is where it is enforced. Republishing re-applies it,
+    // so a teacher who changes their mind changes it by publishing again -
+    // including back to "as soon as published", which clears the column.
+    const opensAt = quiz.draftDoc.settings.opensAt
+    const token = await ensureToken(tx, quizId, opensAt ? new Date(opensAt) : null)
 
     await tx
       .update(quizzes)
@@ -143,10 +148,14 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
  *
  * Republishing deliberately keeps it, so a link already written on a whiteboard
  * or pasted into a class group keeps working and simply resolves to the new
- * active version. Re-publishing also lifts a previous revocation: that is what
- * publishing again means.
+ * active version. Re-publishing also lifts a previous revocation, and re-applies
+ * the opening time: that is what publishing again means.
  */
-async function ensureToken(tx: Tx, quizId: string): Promise<string> {
+async function ensureToken(
+  tx: Tx,
+  quizId: string,
+  opensAt: Date | null
+): Promise<string> {
   const [existing] = await tx
     .select({ token: examLinks.token })
     .from(examLinks)
@@ -156,7 +165,7 @@ async function ensureToken(tx: Tx, quizId: string): Promise<string> {
   if (existing) {
     await tx
       .update(examLinks)
-      .set({ revokedAt: null })
+      .set({ revokedAt: null, opensAt })
       .where(eq(examLinks.token, existing.token))
     return existing.token
   }
@@ -165,7 +174,7 @@ async function ensureToken(tx: Tx, quizId: string): Promise<string> {
     const token = mintToken()
     const [row] = await tx
       .insert(examLinks)
-      .values({ token, quizId })
+      .values({ token, quizId, opensAt })
       .onConflictDoNothing({ target: examLinks.token })
       .returning({ token: examLinks.token })
 

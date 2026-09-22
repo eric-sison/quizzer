@@ -28,6 +28,7 @@ import { sign } from "hono/jwt"
 
 import {
   examAnswers,
+  examLinks,
   examSessions,
   proctorEvents,
   quizVersions,
@@ -241,6 +242,44 @@ describe("POST /api/exam/preview", () => {
     const revoked = await previewExam(link.token)
     expect(revoked.status).toBe(403)
     expect(await revoked.json()).toMatchObject({ error: { code: "revoked" } })
+  })
+
+  it("refuses a link whose opening time has not come, and says which it is", async () => {
+    const link = await publishedQuiz()
+    await db
+      .update(examLinks)
+      .set({ opensAt: new Date(Date.now() + 60 * 60 * 1_000) })
+      .where(eq(examLinks.token, link.token))
+
+    // Both doors, because the student meets the preview first: pasting the
+    // link has to say the exam is not open yet, not fail silently and then
+    // refuse at Begin.
+    const preview = await previewExam(link.token)
+    expect(preview.status).toBe(403)
+    expect(await preview.json()).toMatchObject({ error: { code: "not_yet_open" } })
+
+    const claim = await app.request("/api/exam/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: link.token,
+        client_version: "test",
+        platform: "test",
+      }),
+    })
+    expect(claim.status).toBe(403)
+    expect(await claim.json()).toMatchObject({ error: { code: "not_yet_open" } })
+  })
+
+  it("opens the moment the time passes", async () => {
+    const link = await publishedQuiz()
+    await db
+      .update(examLinks)
+      .set({ opensAt: new Date(Date.now() - 1_000) })
+      .where(eq(examLinks.token, link.token))
+
+    const preview = await previewExam(link.token)
+    expect(preview.status).toBe(200)
   })
 })
 

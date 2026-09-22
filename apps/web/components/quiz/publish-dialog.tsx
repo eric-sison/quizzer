@@ -9,7 +9,7 @@ import {
   type QuizDoc,
   type QuizStatus,
 } from "@workspace/quiz-core"
-import { Check, Copy, Send, TriangleAlert } from "lucide-react"
+import { CalendarClock, Check, Copy, Send, TriangleAlert } from "lucide-react"
 import { Button } from "@workspace/ui/components/button"
 import {
   Dialog,
@@ -160,6 +160,11 @@ export function PublishDialog({
               <Warnings issues={issues} />
             )}
 
+            {/* Said here as well as in settings, because this is the moment a
+                teacher hands the link over - and the first thing they are
+                likely to do is try it themselves and be told it is not open. */}
+            <OpensAtNote opensAt={doc.settings.opensAt} published={Boolean(shownUrl)} />
+
             {shownUrl ? (
               <LinkRow
                 url={shownUrl}
@@ -264,6 +269,40 @@ function Warnings({ issues }: { issues: Issue[] }) {
         </p>
       ))}
     </div>
+  )
+}
+
+/**
+ * When the link will start working, for a quiz that is not open yet.
+ *
+ * Absent once the time has passed: at that point the link simply works, and a
+ * line about it would be noise on every publish thereafter.
+ */
+function OpensAtNote({
+  opensAt,
+  published,
+}: {
+  opensAt: string | undefined
+  published: boolean
+}) {
+  if (!opensAt) return null
+  const at = new Date(opensAt)
+  if (Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) return null
+
+  return (
+    <p className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2.5 text-sm">
+      <CalendarClock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <span>
+        {published ? "This link opens" : "This link will open"} on{" "}
+        <strong className="font-medium">
+          {at.toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}
+        </strong>
+        . Until then a student who opens it is told the exam has not started.
+      </span>
+    </p>
   )
 }
 

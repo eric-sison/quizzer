@@ -15,6 +15,7 @@ import {
   SheetTrigger,
 } from "@workspace/ui/components/sheet"
 import { Switch } from "@workspace/ui/components/switch"
+import { Tabs, TabsList, TabsTrigger } from "@workspace/ui/components/tabs"
 import { Textarea } from "@workspace/ui/components/textarea"
 
 /** Bounds mirror quizSettingsSchema's durationS range of 1s-24h. */
@@ -76,6 +77,19 @@ export function QuizSettingsSheet({
             </p>
           </div>
 
+          <OpensAtField
+            opensAt={settings.opensAt}
+            onCommit={(opensAt) => {
+              const next = { ...settings }
+              // Deleted rather than set to undefined: the schema is strict and
+              // "no opening time" is the absence of the key, not a key holding
+              // nothing.
+              if (opensAt) next.opensAt = opensAt
+              else delete next.opensAt
+              onChange(next)
+            }}
+          />
+
           <DurationField
             durationS={settings.durationS}
             onCommit={(durationS) => onChange({ ...settings, durationS })}
@@ -101,6 +115,101 @@ export function QuizSettingsSheet({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+/**
+ * When the link starts working.
+ *
+ * Two states rather than a nullable field with a disabled input, because they
+ * are two different intentions: "the moment I publish" and "at this time".
+ * Choosing a time seeds the box with tomorrow morning rather than empty, so
+ * the common case is one edit and not four.
+ *
+ * `datetime-local` reads and writes the teacher's own wall clock; the document
+ * stores an instant. The conversion happens here, at the edge, so nothing
+ * downstream has to wonder whose 9am a stored time means.
+ */
+function OpensAtField({
+  opensAt,
+  onCommit,
+}: {
+  opensAt: string | undefined
+  onCommit: (opensAt: string | undefined) => void
+}) {
+  const scheduled = opensAt !== undefined
+  // Held locally while typing: a half-finished datetime is not a time, and
+  // committing one would put an unparseable value in the document.
+  const [draft, setDraft] = React.useState<string | null>(null)
+
+  function handleChange(raw: string) {
+    setDraft(raw)
+    const at = new Date(raw)
+    if (raw && !Number.isNaN(at.getTime())) {
+      setDraft(null)
+      onCommit(at.toISOString())
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>Opens</Label>
+
+      <Tabs
+        value={scheduled ? "scheduled" : "immediately"}
+        onValueChange={(mode) =>
+          onCommit(mode === "scheduled" ? defaultOpensAt() : undefined)
+        }
+      >
+        <TabsList>
+          <TabsTrigger value="immediately">As soon as published</TabsTrigger>
+          <TabsTrigger value="scheduled">At a set time</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {scheduled ? (
+        <div className="mt-1 flex flex-col gap-1.5">
+          <Input
+            id="quiz-opens-at"
+            type="datetime-local"
+            aria-label="Opening time"
+            value={draft ?? toLocalInput(opensAt)}
+            onChange={(event) => handleChange(event.currentTarget.value)}
+            onBlur={() => setDraft(null)}
+            aria-invalid={draft !== null || undefined}
+          />
+          <p className="text-xs text-muted-foreground">
+            Your own time zone. A student who opens the link before then is told
+            the exam has not opened yet.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          The link works the moment you publish.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Tomorrow at 9am, local - a sensible thing to be adjusting rather than an
+ *  empty box to be filled in from nothing. */
+function defaultOpensAt(): string {
+  const at = new Date()
+  at.setDate(at.getDate() + 1)
+  at.setHours(9, 0, 0, 0)
+  return at.toISOString()
+}
+
+/** An instant as the local wall-clock text `datetime-local` expects. */
+function toLocalInput(iso: string | undefined): string {
+  if (!iso) return ""
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
   )
 }
 

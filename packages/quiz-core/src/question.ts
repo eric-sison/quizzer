@@ -229,6 +229,23 @@ export const quizSettingsSchema = z.strictObject({
   durationS: z.number().int().min(1).max(86_400),
   allowBacktracking: z.boolean(),
   shuffleQuestions: z.boolean(),
+  /**
+   * When the link starts working, as an ISO instant in UTC.
+   *
+   * Absent means "as soon as it is published", which is why this is optional
+   * rather than nullable-with-a-default: no opening time is the ordinary case,
+   * and every quiz authored before this existed is one of them.
+   *
+   * Stored as an instant, never as wall-clock text. A teacher in one timezone
+   * setting 9am for a class in another is a mistake to make once; the editor
+   * converts at the edge and everything inland is absolute.
+   *
+   * Authoring data, not exam data: it reaches `exam_links.opens_at` when the
+   * quiz is published and is enforced there, on the server, when a link is
+   * resolved. It is deliberately not in the manifest - by the time a client
+   * holds one, the exam is open.
+   */
+  opensAt: z.iso.datetime().optional(),
 })
 
 /**
