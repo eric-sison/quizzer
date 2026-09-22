@@ -1,20 +1,27 @@
 import * as React from "react"
 import {
   AlertTriangle,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Circle,
   CloudOff,
   Loader2,
   Lock,
   Timer,
   Unlock,
 } from "lucide-react"
-import { countAnswered } from "@workspace/quiz-core"
+import { countAnswered, isAnswered } from "@workspace/quiz-core"
 import { QuestionView, seededShuffle } from "@workspace/quiz-ui"
 
 import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
-import type { AnswerValue, LockdownReport, SessionSnapshot } from "@/lib/types"
+import type {
+  AnswerValue,
+  LockdownReport,
+  Question,
+  SessionSnapshot,
+} from "@/lib/types"
 
 type ExamProps = {
   snapshot: SessionSnapshot
@@ -68,6 +75,12 @@ export function Exam({
   const manifest = snapshot.manifest
   const [at, setAt] = React.useState(0)
   const [confirming, setConfirming] = React.useState(false)
+  const [reviewing, setReviewing] = React.useState(false)
+  /**
+   * A move off an unanswered question that cannot be undone, waiting on the
+   * student to confirm it. Null whenever there is nothing to ask about.
+   */
+  const [pendingSkip, setPendingSkip] = React.useState<null | "next" | "review">(null)
 
   // One random seed per exam sitting drives both question order and per-
   // question option order, so navigation never reshuffles anything. Caveat: a
@@ -91,6 +104,35 @@ export function Exam({
   const answered = countAnswered(questions, snapshot.answers)
   const urgent = remaining <= 300
   const last = at >= total - 1
+  const backtracking = manifest.allow_backtracking
+  const currentAnswered = question ? isAnswered(snapshot.answers[question.id]) : true
+
+  /**
+   * Move forward, asking first when the move is one way.
+   *
+   * With backtracking off, leaving a question is final: the student cannot
+   * return to fill it in later. Walking past an empty one is the single most
+   * expensive accident available in this screen, so it is the one thing worth
+   * interrupting for. With backtracking on it is not an accident at all -
+   * skipping ahead and coming back is a normal way to sit an exam - so nothing
+   * is asked.
+   */
+  function goForward(target: "next" | "review") {
+    if (!backtracking && !currentAnswered) {
+      setPendingSkip(target)
+      return
+    }
+    commitForward(target)
+  }
+
+  function commitForward(target: "next" | "review") {
+    setPendingSkip(null)
+    if (target === "review") {
+      setReviewing(true)
+      return
+    }
+    setAt((i) => Math.min(total - 1, i + 1))
+  }
 
   return (
     <div className="flex h-svh flex-col">
@@ -118,7 +160,24 @@ export function Exam({
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-10">
-          {question ? (
+          {reviewing ? (
+            <Review
+              questions={questions}
+              answers={snapshot.answers}
+              answered={answered}
+              total={total}
+              // Jumping from the review list is going back, so it is offered
+              // only where going back is allowed at all.
+              onJump={
+                backtracking
+                  ? (index) => {
+                      setReviewing(false)
+                      setAt(index)
+                    }
+                  : undefined
+              }
+            />
+          ) : question ? (
             <>
               {/* The same component the teacher's preview renders, so what they
                   checked before publishing is what a student sits. */}
@@ -173,12 +232,35 @@ export function Exam({
               onSubmit={onSubmit}
               onCancel={() => setConfirming(false)}
             />
+          ) : pendingSkip && !currentAnswered ? (
+            /* The question stays editable behind this, so answering it is one
+               of the ways out: the warning has nothing left to warn about and
+               gets out of the way by itself. */
+            <SkipWarning
+              number={at + 1}
+              last={pendingSkip === "review"}
+              onSkip={() => commitForward(pendingSkip)}
+              onStay={() => setPendingSkip(null)}
+            />
+          ) : reviewing ? (
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="lg" onClick={() => setReviewing(false)}>
+                <ChevronLeft aria-hidden />
+                Back to question {at + 1}
+              </Button>
+
+              <div className="flex-1" />
+
+              <Button size="lg" onClick={() => setConfirming(true)}>
+                Submit exam
+              </Button>
+            </div>
           ) : (
             <div className="flex items-center gap-3">
               <Button
                 variant="outline"
                 size="lg"
-                disabled={at === 0 || !manifest.allow_backtracking}
+                disabled={at === 0 || !backtracking}
                 onClick={() => setAt((i) => Math.max(0, i - 1))}
               >
                 <ChevronLeft aria-hidden />
@@ -187,20 +269,28 @@ export function Exam({
 
               <span className="text-xs text-muted-foreground" aria-live="polite">
                 Question {at + 1} of {total}
-                {manifest.allow_backtracking ? "" : ", you cannot go back"}
+                {backtracking ? "" : ", you cannot go back"}
               </span>
 
               <div className="flex-1" />
 
+              {/* Reachable mid-exam only where the student could act on what
+                  they find there. With backtracking off, an unanswered
+                  question listed with no way to reach it is just something to
+                  worry about, so the list waits until the end. */}
+              {backtracking && !last ? (
+                <Button variant="outline" size="lg" onClick={() => goForward("review")}>
+                  Review
+                </Button>
+              ) : null}
+
               {last ? (
-                <Button size="lg" onClick={() => setConfirming(true)}>
-                  Submit exam
+                <Button size="lg" onClick={() => goForward("review")}>
+                  Review answers
+                  <ChevronRight aria-hidden />
                 </Button>
               ) : (
-                <Button
-                  size="lg"
-                  onClick={() => setAt((i) => Math.min(total - 1, i + 1))}
-                >
+                <Button size="lg" onClick={() => goForward("next")}>
                   Next
                   <ChevronRight aria-hidden />
                 </Button>
@@ -209,6 +299,161 @@ export function Exam({
           )}
         </div>
       </footer>
+    </div>
+  )
+}
+
+/**
+ * The last look before handing in.
+ *
+ * Every question on one screen with its state, because "8 of 10 answered" tells
+ * a student a number and this tells them *which* two. Where backtracking is
+ * allowed each row is the way back to that question; where it is not, the list
+ * is a summary of what is about to be submitted and nothing is clickable,
+ * since offering a jump that the exam forbids would be worse than offering
+ * none.
+ */
+function Review({
+  questions,
+  answers,
+  answered,
+  total,
+  onJump,
+}: {
+  questions: Question[]
+  answers: SessionSnapshot["answers"]
+  answered: number
+  total: number
+  /** Absent when the exam forbids going back. */
+  onJump?: (index: number) => void
+}) {
+  const missing = total - answered
+
+  return (
+    <section className="flex flex-col gap-5" aria-label="Review your answers">
+      <div className="flex flex-col gap-1.5">
+        <h2 className="font-heading text-xl font-medium">Review your answers</h2>
+        <p className="text-sm text-muted-foreground">
+          {missing === 0
+            ? `All ${total} questions answered.`
+            : `${answered} of ${total} answered - ${missing} still blank.`}
+          {onJump
+            ? " Choose a question to go back to it."
+            : " This exam does not allow going back."}
+        </p>
+      </div>
+
+      <ol className="flex flex-col gap-1.5">
+        {questions.map((question, index) => (
+          <ReviewRow
+            key={question.id}
+            index={index}
+            question={question}
+            answered={isAnswered(answers[question.id])}
+            onJump={onJump}
+          />
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function ReviewRow({
+  index,
+  question,
+  answered,
+  onJump,
+}: {
+  index: number
+  question: Question
+  answered: boolean
+  onJump?: (index: number) => void
+}) {
+  const body = (
+    <>
+      <span className="w-6 shrink-0 text-xs text-muted-foreground tabular-nums">
+        {index + 1}
+      </span>
+      {/* The manifest's plain text, not the rich prompt: this is an index, and
+          a code block or an image rendered here would bury the list. */}
+      <span className="min-w-0 flex-1 truncate text-sm">
+        {question.prompt.trim() || "Untitled question"}
+      </span>
+      {answered ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Check className="size-3.5" aria-hidden />
+          Answered
+        </span>
+      ) : (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
+          <Circle className="size-3.5" aria-hidden />
+          {question.required ? "Required" : "Not answered"}
+        </span>
+      )}
+    </>
+  )
+
+  const shared = "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left"
+  const tone = answered ? "border-border" : "border-destructive/40 bg-destructive/5"
+
+  return (
+    <li>
+      {onJump ? (
+        <button
+          type="button"
+          className={cn(shared, tone, "transition-colors hover:bg-accent")}
+          onClick={() => onJump(index)}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className={cn(shared, tone)}>{body}</div>
+      )}
+    </li>
+  )
+}
+
+/**
+ * Asked when moving on cannot be undone and the question is still blank.
+ *
+ * Only where the teacher turned backtracking off: everywhere else a skipped
+ * question can be filled in later, and a prompt on every Next would be noise
+ * the student learns to click through - which is how a warning stops working
+ * on the one occasion it matters.
+ */
+function SkipWarning({
+  number,
+  last,
+  onSkip,
+  onStay,
+}: {
+  number: number
+  /** The move is off the final question, so the next stop is the review list. */
+  last: boolean
+  onSkip: () => void
+  onStay: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+      <p className="flex items-start gap-2 text-sm">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+        <span>
+          <strong className="font-medium">
+            Question {number} has no answer yet.
+          </strong>{" "}
+          This exam does not allow going back, so moving on leaves it blank for
+          good.
+        </span>
+      </p>
+
+      <div className="flex gap-2">
+        <Button size="lg" variant="outline" onClick={onStay}>
+          Answer it
+        </Button>
+        <Button size="lg" variant="destructive" onClick={onSkip}>
+          {last ? "Leave it blank and review" : "Leave it blank and continue"}
+        </Button>
+      </div>
     </div>
   )
 }
