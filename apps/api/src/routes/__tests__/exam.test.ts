@@ -37,9 +37,19 @@ import {
 import { env } from "../../env"
 import { signExamToken, SUBMIT_GRACE_S } from "../../lib/exam-token"
 
+import {
+  bearerHeaders,
+  seedActor,
+  seedInstitution,
+  type TestActor,
+  type TestInstitution,
+} from "./helpers/auth"
+
 const app = createApp()
 
 let owner: string
+let institution: TestInstitution
+let student: TestActor
 
 function teacherHeaders(): Record<string, string> {
   return {
@@ -112,10 +122,10 @@ async function publishedQuiz(
   return (await res.json()) as PublishResponse
 }
 
-async function startSession(token: string) {
+async function startSession(token: string, as?: TestActor) {
   return app.request("/api/exam/session", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: bearerHeaders(as ?? student),
     body: JSON.stringify({ token, client_version: "0.1.0", platform: "macos" }),
   })
 }
@@ -147,10 +157,15 @@ beforeAll(async () => {
     .returning({ id: teachers.id })
   if (!row) throw new Error("could not seed teacher")
   owner = row.id
+
+  institution = await seedInstitution()
+  student = await seedActor(institution, "student")
 })
 
 afterAll(async () => {
   await db.delete(teachers).where(eq(teachers.id, owner))
+  await student.cleanup()
+  await institution.cleanup()
   await sqlClient.end()
 })
 
@@ -298,15 +313,7 @@ describe("POST /api/exam/preview", () => {
       .set({ opensAt: new Date(Date.now() + 60 * 60 * 1_000) })
       .where(eq(examLinks.token, link.token))
 
-    const claim = await app.request("/api/exam/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        token: link.token,
-        client_version: "test",
-        platform: "test",
-      }),
-    })
+    const claim = await startSession(link.token)
     expect(claim.status).toBe(403)
     expect(await claim.json()).toMatchObject({ error: { code: "not_yet_open" } })
 
@@ -352,6 +359,47 @@ describe("POST /api/exam/session", () => {
     expect(session.session_jwt.length).toBeGreaterThan(20)
     expect(session.exam.questions).toHaveLength(3)
     expect(session.expires_at).toBeGreaterThan(session.server_time)
+  })
+
+  it("refuses a claim with no signed-in student", async () => {
+    const link = await publishedQuiz()
+
+    const res = await app.request("/api/exam/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: link.token, client_version: "t", platform: "t" }),
+    })
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ error: { code: "auth_required" } })
+  })
+
+  it("refuses a suspended account at claim time, whatever its session says", async () => {
+    const link = await publishedQuiz()
+    const suspended = await seedActor(institution, "student", { status: "suspended" })
+
+    const res = await startSession(link.token, suspended)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toMatchObject({ error: { code: "student_not_allowed" } })
+
+    await suspended.cleanup()
+  })
+
+  it("writes who sat it, from the session - the body has no say", async () => {
+    const link = await publishedQuiz()
+    const res = await startSession(link.token)
+    expect(res.status).toBe(200)
+
+    const [row] = await db
+      .select({
+        studentRef: examSessions.studentRef,
+        studentUserId: examSessions.studentUserId,
+      })
+      .from(examSessions)
+      .where(eq(examSessions.token, link.token))
+    expect(row).toMatchObject({
+      studentRef: student.email.toLowerCase(),
+      studentUserId: student.userId,
+    })
   })
 
   it("sets the deadline from the quiz's own duration", async () => {

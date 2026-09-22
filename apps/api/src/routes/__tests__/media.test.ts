@@ -16,10 +16,20 @@ import { createApp } from "../../app"
 import { db, sqlClient, teachers } from "../../db"
 import { env } from "../../env"
 
+import {
+  bearerHeaders,
+  seedActor,
+  seedInstitution,
+  type TestActor,
+  type TestInstitution,
+} from "./helpers/auth"
+
 const app = createApp()
 
 let owner: string
 let stranger: string
+let institution: TestInstitution
+let student: TestActor
 
 /** Smallest valid PNG: 1x1 transparent pixel. */
 const PIXEL_PNG = Uint8Array.from(
@@ -71,11 +81,15 @@ async function upload(
 beforeAll(async () => {
   owner = await makeTeacher("media-owner")
   stranger = await makeTeacher("media-stranger")
+  institution = await seedInstitution()
+  student = await seedActor(institution, "student")
 })
 
 afterAll(async () => {
   await db.delete(teachers).where(eq(teachers.id, owner))
   await db.delete(teachers).where(eq(teachers.id, stranger))
+  await student.cleanup()
+  await institution.cleanup()
   await sqlClient.end()
 })
 
@@ -173,7 +187,7 @@ describe("exam media", () => {
   async function claim(token: string): Promise<string> {
     const res = await app.request("/api/exam/session", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: bearerHeaders(student),
       body: JSON.stringify({ token, client_version: "0.1.0", platform: "macos" }),
     })
     expect(res.status).toBe(200)
@@ -187,7 +201,7 @@ describe("exam media", () => {
     const jwt = await claim(token)
     const session = await app.request("/api/exam/session", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: bearerHeaders(student),
       body: JSON.stringify({ token, client_version: "0.1.0", platform: "macos" }),
     })
     const manifest = ((await session.json()) as { exam: { questions: unknown[] } }).exam

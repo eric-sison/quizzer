@@ -5,6 +5,7 @@
  */
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -21,16 +22,101 @@ import {
 
 import type { ExamManifest, QuizAnswerKey, QuizDoc } from "@workspace/quiz-core"
 
+import { user } from "./auth-schema"
+
 const createdAt = timestamp("created_at", { withTimezone: true })
   .notNull()
   .defaultNow()
 
 export const quizStatus = pgEnum("quiz_status", ["draft", "published", "archived"])
 
+export const memberRole = pgEnum("member_role", ["admin", "teacher", "student"])
+export const memberStatus = pgEnum("member_status", ["active", "suspended"])
+
+/**
+ * v1 seeds exactly one institution. The tables are shaped for several from the
+ * start - the globally unique domain below is what routes a signing-in email
+ * to its institution - so growing past one is additive, not a rewrite.
+ */
+export const institutions = pgTable("institutions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  /**
+   * When true, a first sign-in from an allowed domain becomes an active
+   * student membership with no admin involved. Teacher and admin are never
+   * granted this way.
+   */
+  autoProvisionStudents: boolean("auto_provision_students").notNull().default(true),
+  createdAt,
+})
+
+/**
+ * The sign-in allowlist. An email may authenticate iff its domain (the part
+ * after the last "@", lowercased, compared whole) has a row here. Checked
+ * inside Better Auth's pipeline on every sign-in, never in a client.
+ */
+export const institutionDomains = pgTable("institution_domains", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  institutionId: uuid("institution_id")
+    .notNull()
+    .references(() => institutions.id, { onDelete: "cascade" }),
+  /** Lowercased. Globally unique so one email maps to exactly one institution. */
+  domain: text("domain").notNull().unique(),
+  createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+  createdAt,
+})
+
+/**
+ * Where roles live - deliberately not a column Better Auth manages, so no
+ * Better Auth endpoint can ever write one. Only the admin routes touch this
+ * table.
+ */
+export const institutionMembers = pgTable(
+  "institution_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    institutionId: uuid("institution_id")
+      .notNull()
+      .references(() => institutions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: memberRole("role").notNull(),
+    status: memberStatus("status").notNull().default("active"),
+    /** Null when auto-provisioned (students, and the bootstrap admin). */
+    grantedBy: text("granted_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt,
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("institution_members_user_idx").on(t.institutionId, t.userId)]
+)
+
+/**
+ * A role promised to an email that has not signed in yet. Written by the
+ * bootstrap script (the initial admin) and consumed exactly once, when that
+ * email's first Google sign-in creates its user row.
+ */
+export const pendingRoleGrants = pgTable("pending_role_grants", {
+  /** Lowercased full email address. */
+  email: text("email").primaryKey(),
+  institutionId: uuid("institution_id")
+    .notNull()
+    .references(() => institutions.id, { onDelete: "cascade" }),
+  role: memberRole("role").notNull(),
+  createdAt,
+})
+
 export const teachers = pgTable("teachers", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
+  /**
+   * The signed-in identity this authoring profile belongs to. Null only for
+   * rows that predate real auth (the dev seed); a profile is otherwise created
+   * in the same transaction as its teacher/admin membership.
+   */
+  userId: text("user_id").unique().references(() => user.id, { onDelete: "set null" }),
   createdAt,
 })
 
@@ -138,8 +224,17 @@ export const examSessions = pgTable(
       .notNull()
       .references(() => quizVersions.id, { onDelete: "restrict" }),
 
-    /** Null until students identify themselves - see the note in seed.ts. */
+    /**
+     * The student's verified email, snapshotted at claim time from their
+     * signed-in session - never from anything the client asserts. Denormalized
+     * on purpose: it survives account deletion and reads meaningfully in
+     * results without a join.
+     */
     studentRef: text("student_ref"),
+    /** The signed-in identity that claimed this session. */
+    studentUserId: text("student_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
 
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     /** The server's deadline. The client mirrors it but is never trusted. */
@@ -219,3 +314,7 @@ export type QuizRow = typeof quizzes.$inferSelect
 export type QuizVersionRow = typeof quizVersions.$inferSelect
 export type ExamLinkRow = typeof examLinks.$inferSelect
 export type ExamSessionRow = typeof examSessions.$inferSelect
+export type InstitutionRow = typeof institutions.$inferSelect
+export type InstitutionDomainRow = typeof institutionDomains.$inferSelect
+export type InstitutionMemberRow = typeof institutionMembers.$inferSelect
+export type MemberRole = InstitutionMemberRow["role"]

@@ -11,6 +11,19 @@ const envSchema = z.object({
   /** Signs exam session JWTs. Must differ from any teacher credential. */
   EXAM_JWT_SECRET: z.string().min(16),
   /**
+   * Better Auth's signing/encryption secret - the third credential class.
+   * Must differ from both of the above; see the pairwise check below.
+   */
+  BETTER_AUTH_SECRET: z.string().min(32),
+  /**
+   * Where apps/web is served. Better Auth's baseURL: Google's redirect URI
+   * lives on this origin and browsers reach /api/auth/* through the web app's
+   * rewrite, so this API never has to accept a browser connection itself.
+   */
+  PUBLIC_WEB_ORIGIN: z.url(),
+  GOOGLE_CLIENT_ID: z.string().min(1),
+  GOOGLE_CLIENT_SECRET: z.string().min(1),
+  /**
    * Garage (S3-compatible) media storage. Only apps/api ever talks to it:
    * browsers and the desktop client receive media through this API.
    */
@@ -36,10 +49,22 @@ function load(): Env {
     )
   }
 
-  if (parsed.data.SERVICE_TOKEN === parsed.data.EXAM_JWT_SECRET) {
-    throw new Error(
-      "SERVICE_TOKEN and EXAM_JWT_SECRET must differ: an exam token must never authorize teacher endpoints."
-    )
+  // Three credential classes, three secrets. Any two matching would let one
+  // audience's token authorize another audience's endpoints.
+  const secrets: [string, string][] = [
+    ["SERVICE_TOKEN", parsed.data.SERVICE_TOKEN],
+    ["EXAM_JWT_SECRET", parsed.data.EXAM_JWT_SECRET],
+    ["BETTER_AUTH_SECRET", parsed.data.BETTER_AUTH_SECRET],
+  ]
+  for (let i = 0; i < secrets.length; i++) {
+    for (let j = i + 1; j < secrets.length; j++) {
+      if (secrets[i]![1] === secrets[j]![1]) {
+        throw new Error(
+          `${secrets[i]![0]} and ${secrets[j]![0]} must differ: a token from one ` +
+            `credential class must never authorize another's endpoints.`
+        )
+      }
+    }
   }
 
   return parsed.data

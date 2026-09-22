@@ -23,6 +23,7 @@ import { Hono } from "hono"
 import type { ExamEnv } from "../lib/hono"
 import { validate } from "../lib/validate"
 import { assertWritable, requireExamSession } from "../middleware/exam-auth"
+import { requireStudent } from "../middleware/student-auth"
 import { z } from "zod"
 
 import {
@@ -50,16 +51,25 @@ examRoutes.post(
 )
 
 /**
- * The one exam route without a credential: it is where the credential comes
- * from. The link token is what authorises it.
+ * The claim: link token in, exam JWT out. The link token authorises the exam;
+ * the student's signed-in session (checked by requireStudent, presented as a
+ * bearer token by the desktop's Rust process) supplies who is sitting it.
+ * Identity is written server-side from that session - no field in this request
+ * body names the student, so no client can claim to be someone else.
  */
+examRoutes.use("/api/exam/session", requireStudent)
 examRoutes.post(
   "/api/exam/session",
   validate("json", startSessionRequestSchema),
   async (c) => {
     const body = c.req.valid("json")
     return c.json(
-      await startSession(body.token, body.client_version, body.platform)
+      await startSession(
+        body.token,
+        body.client_version,
+        body.platform,
+        c.get("student")
+      )
     )
   }
 )

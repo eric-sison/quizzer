@@ -32,7 +32,7 @@ import {
 } from "../db/schema"
 import { ApiError } from "../lib/errors"
 import { epochSeconds, signExamToken } from "../lib/exam-token"
-import type { ExamSessionContext } from "../lib/hono"
+import type { ExamSessionContext, StudentContext } from "../lib/hono"
 
 /**
  * Token → the active published version, with every way a link can be dead
@@ -145,7 +145,8 @@ export async function previewExam(token: string): Promise<PreviewExamResponse> {
 export async function startSession(
   token: string,
   clientVersion: string,
-  platform: string
+  platform: string,
+  student: StudentContext
 ): Promise<StartSessionResponse> {
   const now = new Date()
   const version = await resolveActiveVersion(token, now)
@@ -155,6 +156,10 @@ export async function startSession(
   // `versionId` is written once, here, and never updated. This one column is
   // what guarantees a student who started on v1 finishes on v1 even if their
   // teacher republishes mid-exam.
+  //
+  // `studentRef`/`studentUserId` come from the verified session requireStudent
+  // resolved, never from the request body - there is no field there for an
+  // identity to arrive in.
   const [session] = await db
     .insert(examSessions)
     .values({
@@ -164,6 +169,8 @@ export async function startSession(
       clientVersion,
       platform,
       lastSeenAt: now,
+      studentRef: student.email.toLowerCase(),
+      studentUserId: student.userId,
     })
     .returning({ id: examSessions.id })
 

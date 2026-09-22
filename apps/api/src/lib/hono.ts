@@ -6,7 +6,20 @@ import type { TeacherRow } from "../db/schema"
 export type AppEnv = {
   Variables: {
     teacher: TeacherRow
+    /** Set by requireAdmin. Only the admin routes read it. */
+    admin: {
+      userId: string
+      email: string
+      institutionId: string
+    }
   }
+}
+
+/** The signed-in identity claiming an exam session. Set by requireStudent. */
+export type StudentContext = {
+  userId: string
+  email: string
+  name: string
 }
 
 /** What an authenticated exam request carries. Never a teacher. */
@@ -27,5 +40,7 @@ export type ExamSessionContext = {
 export type ExamEnv = {
   Variables: {
     session: ExamSessionContext
+    /** Present only on the claim route, set by requireStudent. */
+    student: StudentContext
   }
 }
