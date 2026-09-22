@@ -124,6 +124,47 @@ describe("updateSettings", () => {
     expect(next.doc.questions).toBe(doc.questions)
     expect(next.selectedId).toBe(state.selectedId)
   })
+
+  it("takes a setting the no-op check was not written to look at", () => {
+    // The check compared the three settings that existed when it was written,
+    // so adding a fourth made every change to it read as "not an edit". The
+    // control in the sheet snapped straight back and looked broken, with
+    // nothing failing anywhere. Compared over every key now, which is why this
+    // asserts through an arbitrary one rather than through `opensAt` by name.
+    const doc = docWith("essay")
+    const state = stateOf(doc)
+
+    const opensAt = new Date(Date.now() + 3_600_000).toISOString()
+    const next = editorReducer(state, {
+      type: "updateSettings",
+      settings: { ...doc.settings, opensAt },
+    })
+
+    expect(next).not.toBe(state)
+    expect(next.doc.settings.opensAt).toBe(opensAt)
+  })
+
+  it("still ignores a re-emit, and clearing a setting is not one", () => {
+    const opensAt = new Date(Date.now() + 3_600_000).toISOString()
+    const doc = { ...docWith("essay") }
+    doc.settings = { ...doc.settings, opensAt }
+    const state = stateOf(doc)
+
+    expect(
+      editorReducer(state, { type: "updateSettings", settings: { ...doc.settings } })
+    ).toBe(state)
+
+    // Removing the key is a real edit, even though nothing took a new value.
+    const withoutIt = { ...doc.settings }
+    delete withoutIt.opensAt
+    const cleared = editorReducer(state, {
+      type: "updateSettings",
+      settings: withoutIt,
+    })
+
+    expect(cleared).not.toBe(state)
+    expect(cleared.doc.settings).not.toHaveProperty("opensAt")
+  })
 })
 
 describe("insertQuestion", () => {

@@ -122,17 +122,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
 
     case "updateSettings": {
-      const prev = state.doc.settings
-      const next = action.settings
-      // A control re-emitting the values it was handed is not an edit.
-      if (
-        next.durationS === prev.durationS &&
-        next.allowBacktracking === prev.allowBacktracking &&
-        next.shuffleQuestions === prev.shuffleQuestions
-      ) {
-        return state
-      }
-      return { ...state, doc: { ...state.doc, settings: next } }
+      // A control re-emitting the values it was handed is not an edit, and
+      // must not make a clean draft look dirty.
+      if (sameSettings(state.doc.settings, action.settings)) return state
+      return { ...state, doc: { ...state.doc, settings: action.settings } }
     }
 
     case "replaceDoc": {
@@ -147,6 +140,25 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
     }
   }
+}
+
+/**
+ * Shallow equality over every key either object has.
+ *
+ * Exact, because every setting is a primitive - and general, because the
+ * version this replaces named the three settings that existed when it was
+ * written. Adding a fourth did not make it return false, so the reducer
+ * answered "not an edit" and the new setting could not be changed at all: the
+ * control snapped back and read as broken.
+ */
+function sameSettings(a: QuizSettings, b: QuizSettings): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<
+    keyof QuizSettings
+  >
+  for (const key of keys) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
 }
 
 function indexOf(doc: QuizDoc, id: string): number {
