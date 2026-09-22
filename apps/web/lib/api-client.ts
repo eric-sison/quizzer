@@ -1,15 +1,25 @@
 import "server-only"
 
+import { cookies } from "next/headers"
 import {
+  allowedDomainSchema,
   apiErrorSchema,
+  institutionConfigSchema,
   listQuizMediaResponseSchema,
+  memberListSchema,
+  memberSchema,
   publishResponseSchema,
   quizDetailSchema,
   quizSummarySchema,
   saveDraftResponseSchema,
   uploadMediaResponseSchema,
+  type AllowedDomain,
   type ApiErrorCode,
+  type InstitutionConfig,
   type Issue,
+  type Member,
+  type MemberRole,
+  type MemberStatus,
   type PublishResponse,
   type QuizDetail,
   type QuizDoc,
@@ -20,7 +30,6 @@ import {
 } from "@workspace/quiz-core"
 import { z } from "zod"
 
-import { getCurrentTeacher } from "./auth"
 import { env } from "./env"
 
 /** A fetch that never reached apps/api gets its own code. */
@@ -45,6 +54,15 @@ export class ApiClientError extends Error {
   }
 }
 
+/**
+ * Who is calling is no longer a header this client invents: apps/api reads
+ * the Better Auth session cookie, so authenticating a server-side call means
+ * forwarding the cookie the browser sent us.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  return { cookie: (await cookies()).toString() }
+}
+
 type RequestOptions<T> = {
   method?: "GET" | "POST" | "PUT" | "DELETE"
   body?: unknown
@@ -54,15 +72,13 @@ type RequestOptions<T> = {
 
 async function request<T>(path: string, options: RequestOptions<T> = {}): Promise<T> {
   const { method = "GET", body, schema } = options
-  const teacher = await getCurrentTeacher()
 
   let response: Response
   try {
     response = await fetch(`${env.API_ORIGIN}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${env.SERVICE_TOKEN}`,
-        "X-Teacher-Id": teacher.id,
+        ...(await authHeaders()),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -73,12 +89,7 @@ async function request<T>(path: string, options: RequestOptions<T> = {}): Promis
   } catch {
     // The reason a socket refused is not actionable for a teacher; what is
     // actionable is that apps/api is not answering.
-    throw new ApiClientError(
-      "network_unavailable",
-      0,
-      "Could not reach the quiz service.",
-      undefined
-    )
+    throw new ApiClientError("network_unavailable", 0, "Could not reach the quiz service.", undefined)
   }
 
   if (!response.ok) {
@@ -105,20 +116,11 @@ async function toClientError(response: Response): Promise<ApiClientError> {
   const envelope = apiErrorSchema.safeParse(await response.json().catch(() => null))
 
   if (!envelope.success) {
-    return new ApiClientError(
-      "server_error",
-      response.status,
-      "The quiz service returned an unreadable error."
-    )
+    return new ApiClientError("server_error", response.status, "The quiz service returned an unreadable error.")
   }
 
   const { code, message, issues } = envelope.data.error
-  return new ApiClientError(
-    code,
-    response.status,
-    message ?? code,
-    issues as Issue[] | undefined
-  )
+  return new ApiClientError(code, response.status, message ?? code, issues as Issue[] | undefined)
 }
 
 export const quizApi = {
@@ -177,32 +179,20 @@ export const quizApi = {
   },
 
   /** Raw bytes, not JSON: an image has no business being base64'd. */
-  async uploadImage(
-    quizId: string,
-    contentType: string,
-    body: Uint8Array
-  ): Promise<UploadMediaResponse> {
-    const teacher = await getCurrentTeacher()
-
+  async uploadImage(quizId: string, contentType: string, body: Uint8Array): Promise<UploadMediaResponse> {
     let response: Response
     try {
       response = await fetch(`${env.API_ORIGIN}/api/quizzes/${quizId}/media`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${env.SERVICE_TOKEN}`,
-          "X-Teacher-Id": teacher.id,
+          ...(await authHeaders()),
           "Content-Type": contentType,
         },
         body: body as BodyInit,
         cache: "no-store",
       })
     } catch {
-      throw new ApiClientError(
-        "network_unavailable",
-        0,
-        "Could not reach the quiz service.",
-        undefined
-      )
+      throw new ApiClientError("network_unavailable", 0, "Could not reach the quiz service.", undefined)
     }
 
     if (!response.ok) throw await toClientError(response)
@@ -223,13 +213,65 @@ export const quizApi = {
    * stream on - never parsed here, because the body is not ours to interpret.
    */
   async imageResponse(mediaId: string): Promise<Response> {
-    const teacher = await getCurrentTeacher()
     return fetch(`${env.API_ORIGIN}/api/media/${mediaId}`, {
-      headers: {
-        Authorization: `Bearer ${env.SERVICE_TOKEN}`,
-        "X-Teacher-Id": teacher.id,
-      },
+      headers: await authHeaders(),
       cache: "no-store",
+    })
+  },
+}
+
+/**
+ * The admin surface. Same chokepoint, same cookie: apps/api's requireAdmin is
+ * the gate, this just carries the session along.
+ */
+export const adminApi = {
+  getInstitution(): Promise<InstitutionConfig> {
+    return request("/api/admin/institution", { schema: institutionConfigSchema })
+  },
+
+  updateInstitution(update: { name?: string; autoProvisionStudents?: boolean }): Promise<InstitutionConfig> {
+    return request("/api/admin/institution", {
+      method: "PUT",
+      body: update,
+      schema: institutionConfigSchema,
+    })
+  },
+
+  addDomain(domain: string): Promise<AllowedDomain> {
+    return request("/api/admin/domains", {
+      method: "POST",
+      body: { domain },
+      schema: allowedDomainSchema,
+    })
+  },
+
+  removeDomain(id: string): Promise<void> {
+    return request(`/api/admin/domains/${id}`, { method: "DELETE" })
+  },
+
+  listMembers(): Promise<Member[]> {
+    return request("/api/admin/members", { schema: memberListSchema }).then((body) => body.members)
+  },
+
+  setMemberRole(userId: string, role: MemberRole): Promise<Member> {
+    return request(`/api/admin/members/${userId}/role`, {
+      method: "PUT",
+      body: { role },
+      schema: memberSchema,
+    })
+  },
+
+  setMemberStatus(userId: string, status: MemberStatus): Promise<Member> {
+    return request(`/api/admin/members/${userId}/status`, {
+      method: "PUT",
+      body: { status },
+      schema: memberSchema,
+    })
+  },
+
+  revokeMemberSessions(userId: string): Promise<void> {
+    return request(`/api/admin/members/${userId}/revoke-sessions`, {
+      method: "POST",
     })
   },
 }

@@ -1,13 +1,10 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import {
-  ChartNoAxesColumn,
-  ClipboardCheck,
-  Settings,
-  Users,
-} from "lucide-react"
+import { ChartNoAxesColumn, ClipboardCheck, LogOut, Settings, ShieldCheck, Users } from "lucide-react"
+import { Button } from "@workspace/ui/components/button"
 import {
   Sidebar,
   SidebarContent,
@@ -22,6 +19,7 @@ import {
 } from "@workspace/ui/components/sidebar"
 
 import type { Teacher } from "@/lib/auth"
+import { authClient } from "@/lib/auth-client"
 
 const NAV = [
   { href: "/quizzes", label: "Quizzes", icon: ClipboardCheck },
@@ -30,8 +28,24 @@ const NAV = [
   { href: "/settings", label: "Settings", icon: Settings },
 ]
 
-export function AppSidebar({ teacher }: { teacher: Teacher }) {
+const ADMIN_NAV = { href: "/admin", label: "Admin", icon: ShieldCheck }
+
+export function AppSidebar({ teacher, isAdmin }: { teacher: Teacher; isAdmin: boolean }) {
   const pathname = usePathname()
+  const [signingOut, setSigningOut] = React.useState(false)
+
+  async function signOut() {
+    setSigningOut(true)
+    try {
+      await authClient.signOut()
+    } finally {
+      // A hard navigation, not router.push: it drops every server component
+      // rendered for the old session rather than patching around it.
+      window.location.href = "/login"
+    }
+  }
+
+  const nav = isAdmin ? [...NAV, ADMIN_NAV] : NAV
 
   return (
     <Sidebar>
@@ -40,9 +54,7 @@ export function AppSidebar({ teacher }: { teacher: Teacher }) {
           <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <ClipboardCheck className="size-3.5" />
           </span>
-          <span className="font-heading text-sm font-semibold tracking-tight">
-            Quizzer
-          </span>
+          <span className="font-heading text-sm font-semibold tracking-tight">Quizzer</span>
         </div>
       </SidebarHeader>
 
@@ -50,7 +62,7 @@ export function AppSidebar({ teacher }: { teacher: Teacher }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV.map((item) => (
+              {nav.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     isActive={pathname.startsWith(item.href)}
@@ -78,13 +90,13 @@ export function AppSidebar({ teacher }: { teacher: Teacher }) {
               .slice(0, 2)
               .toUpperCase()}
           </span>
-          <span className="flex min-w-0 flex-col">
+          <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-xs font-medium">{teacher.name}</span>
-            {/* Honest label: sign-in is a seam, not a real session yet. */}
-            <span className="text-[10px] text-muted-foreground">
-              Mock sign-in
-            </span>
+            <span className="truncate text-[10px] text-muted-foreground">{teacher.email}</span>
           </span>
+          <Button variant="ghost" size="icon-sm" aria-label="Sign out" disabled={signingOut} onClick={signOut}>
+            <LogOut />
+          </Button>
         </div>
       </SidebarFooter>
       <SidebarRail />
