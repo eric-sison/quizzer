@@ -30,6 +30,13 @@ import {
 
 export type Screen = "link-entry" | "starting" | "exam" | "submitted" | "error"
 
+/**
+ * What ended the sitting. The results screen says so, because "you submitted"
+ * and "the clock ran out" are different things to read after an exam, and a
+ * student whose time expired needs to know their work went in anyway.
+ */
+export type EndedBy = "student" | "time_up"
+
 type State = {
   screen: Screen
   snapshot: SessionSnapshot | null
@@ -39,6 +46,11 @@ type State = {
   strikeNotice: string | null
   remaining: number
   submitting: boolean
+  /** Set once the deadline passes, which freezes the exam behind it. */
+  timeUp: boolean
+  /** When the freeze began, so a submit that never lands can say so. */
+  timeUpAt: number | null
+  endedBy: EndedBy
   /** Questions whose last save failed, so the UI can flag them. */
   unsaved: Set<string>
 }
@@ -52,6 +64,9 @@ const INITIAL: State = {
   strikeNotice: null,
   remaining: 0,
   submitting: false,
+  timeUp: false,
+  timeUpAt: null,
+  endedBy: "student",
   unsaved: new Set(),
 }
 
@@ -66,7 +81,14 @@ export function useExamSession() {
   // --- begin ---------------------------------------------------------------
 
   const begin = React.useCallback(async (link: string) => {
-    setState((s) => ({ ...s, screen: "starting", error: null }))
+    setState((s) => ({
+      ...s,
+      screen: "starting",
+      error: null,
+      timeUp: false,
+      timeUpAt: null,
+      endedBy: "student",
+    }))
 
     try {
       const { snapshot, lockdown } = await startSession(link)
@@ -100,6 +122,14 @@ export function useExamSession() {
 
   // --- answering -----------------------------------------------------------
 
+  /**
+   * `submit` is defined below and `answer` needs to call it when the server
+   * says time is up. A ref keeps that one-way reference from forcing the two
+   * callbacks into a dependency cycle, and from re-creating `answer` - which
+   * every question's onChange is bound to - on each render.
+   */
+  const submitRef = React.useRef<() => Promise<void>>(async () => {})
+
   const answer = React.useCallback(
     async (questionId: string, value: AnswerValue) => {
       // Optimistic: the input stays responsive while the save is in flight.
@@ -121,13 +151,25 @@ export function useExamSession() {
       } catch (raw) {
         const error = toAppError(raw)
 
-        // The session ending mid-answer is not a save failure - it's a change
-        // of phase, and the student needs the corresponding screen.
-        if (
-          error.code === "expired" ||
-          error.code === "already_submitted" ||
-          error.code === "revoked"
-        ) {
+        // The server refuses writes past the deadline. That is not a failure
+        // the student should read as one: their exam is over and everything
+        // they saved is already on the server, so freeze the paper and let the
+        // submit that is already coming take them to their results.
+        if (error.code === "expired") {
+          setState((s) => ({
+            ...s,
+            timeUp: true,
+            timeUpAt: s.timeUpAt ?? Date.now(),
+            endedBy: "time_up",
+            remaining: 0,
+          }))
+          void submitRef.current()
+          return
+        }
+
+        // The other two are genuine ends-of-session with nothing to submit:
+        // one is already in, the other was withdrawn by a teacher.
+        if (error.code === "already_submitted" || error.code === "revoked") {
           setState((s) => ({ ...s, screen: "error", error }))
           return
         }
@@ -152,9 +194,23 @@ export function useExamSession() {
       }))
     } catch (raw) {
       const error = toAppError(raw)
-      setState((s) => ({ ...s, submitting: false, screen: "error", error }))
+      setState((s) => {
+        // Past the deadline, Rust is retrying this on its own cadence and will
+        // emit `submitted` when it lands. Replacing the frozen paper with a
+        // network error would be a dead end shown seconds before it resolves,
+        // so stay put and keep saying the answers are going in.
+        if (s.timeUp) return { ...s, submitting: false }
+        return { ...s, submitting: false, screen: "error", error }
+      })
     }
   }, [])
+
+  // Refreshed in an effect rather than during render: `answer` only reads this
+  // from an async callback, long after commit, so there is nothing to gain by
+  // writing it earlier and a discarded render to lose by it.
+  React.useEffect(() => {
+    submitRef.current = submit
+  }, [submit])
 
   // --- countdown -----------------------------------------------------------
 
@@ -168,6 +224,14 @@ export function useExamSession() {
     // Re-sync against Rust periodically. The local tick is only for a smooth
     // display; this is what keeps it honest across sleep, drift and any
     // deadline change a proctor makes.
+    //
+    // It is also the backstop for the results screen. Rust emits `submitted`
+    // when the auto-submit lands, but an event is a one-shot: if it fires
+    // before this window is listening, or is lost on the way, nothing else
+    // would ever move the student off the exam - they would sit at "finishing
+    // your exam" forever with a submitted paper. The snapshot carries the
+    // phase, so reading it here means the screen cannot disagree with the
+    // session for longer than one tick.
     const resync = window.setInterval(async () => {
       try {
         const snapshot = await getSessionState()
@@ -176,17 +240,21 @@ export function useExamSession() {
           snapshot,
           remaining: snapshot.remaining_s,
           strikes: snapshot.strikes,
+          screen: snapshot.phase === "submitted" ? "submitted" : s.screen,
+          submitting: snapshot.phase === "submitted" ? false : s.submitting,
         }))
       } catch {
         // Transient; the next tick will try again.
       }
-    }, 15_000)
+      // Once the deadline has passed the student is watching a spinner, so
+      // check often enough that landing on their results feels immediate.
+    }, state.timeUp ? 1_000 : 15_000)
 
     return () => {
       window.clearInterval(tick)
       window.clearInterval(resync)
     }
-  }, [state.screen])
+  }, [state.screen, state.timeUp])
 
   // --- Rust-emitted events -------------------------------------------------
 
@@ -225,7 +293,20 @@ export function useExamSession() {
       })
     )
 
-    track(onTimeUp(() => setState((s) => ({ ...s, remaining: 0 }))))
+    // Rust reached the deadline. It is submitting on our behalf; this freezes
+    // the paper in the meantime so nothing is typed into a form that can no
+    // longer be saved.
+    track(
+      onTimeUp(() =>
+        setState((s) => ({
+          ...s,
+          remaining: 0,
+          timeUp: true,
+          timeUpAt: s.timeUpAt ?? Date.now(),
+          endedBy: "time_up",
+        }))
+      )
+    )
 
     track(onLockdown((lockdown) => setState((s) => ({ ...s, lockdown }))))
 

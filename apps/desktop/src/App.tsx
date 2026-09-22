@@ -32,6 +32,8 @@ function App() {
           strikeNotice={session.strikeNotice}
           unsaved={session.unsaved}
           submitting={session.submitting}
+          timeUp={session.timeUp}
+          timeUpAt={session.timeUpAt}
           onAnswer={session.answer}
           onSubmit={session.submit}
           onDismissStrike={session.dismissStrikeNotice}
@@ -41,7 +43,13 @@ function App() {
       )
 
     case "submitted":
-      return <Submitted receipt={session.snapshot?.receipt ?? null} />
+      return (
+        <Submitted
+          receipt={session.snapshot?.receipt ?? null}
+          snapshot={session.snapshot}
+          endedBy={session.endedBy}
+        />
+      )
 
     case "error":
       return session.error ? (

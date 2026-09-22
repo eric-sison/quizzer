@@ -24,6 +24,9 @@ const MAX_BATCH: usize = 50;
 pub mod kind {
     pub const EXAM_STARTED: &str = "exam_started";
     pub const EXAM_SUBMITTED: &str = "exam_submitted";
+    /// An auto-submit at the deadline that did not reach the server. Recorded
+    /// once per sitting; the client keeps retrying behind it.
+    pub const SUBMIT_FAILED: &str = "submit_failed";
     pub const FOCUS_LOST: &str = "focus_lost";
     pub const FOCUS_RESTORED: &str = "focus_restored";
     pub const CLOSE_ATTEMPT: &str = "close_attempt";

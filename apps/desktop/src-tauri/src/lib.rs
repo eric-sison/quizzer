@@ -31,9 +31,17 @@ use events::kind;
 
 const MAIN_WINDOW: &str = "main";
 
-/// How often we tell the server we're still here. Also the tick that drives the
-/// countdown and the deadline auto-submit.
+/// How often we tell the server we're still here, and re-sync our copy of the
+/// deadline with its clock.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+/// How often we check whether time has run out.
+///
+/// Separate from the heartbeat, and far shorter, because this one costs
+/// nothing: it compares two numbers already in memory. Riding on the heartbeat
+/// meant a student could sit past the deadline for up to fifteen seconds with
+/// the clock reading 00:00, still typing into inputs the server had already
+/// begun refusing.
+const DEADLINE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Audit events flush faster than the heartbeat so a proctor watching live sees
 /// an escape attempt promptly.
 const EVENT_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
@@ -74,6 +82,7 @@ pub fn run() {
             let window = build_main_window(app.handle())?;
             lockdown::prepare_window(&window);
             spawn_heartbeat(app.handle().clone());
+            spawn_deadline_watch(app.handle().clone());
             spawn_event_flusher(app.handle().clone());
             Ok(())
         })
@@ -200,8 +209,8 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWind
     Ok(window)
 }
 
-/// Keep the server informed we're alive, keep our deadline in sync with its
-/// clock, and auto-submit when time runs out.
+/// Keep the server informed we're alive and keep our deadline in sync with its
+/// clock. The deadline itself is watched separately, below.
 fn spawn_heartbeat(handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -252,14 +261,71 @@ fn spawn_heartbeat(handle: tauri::AppHandle) {
                 }
             }
 
-            let remaining = state.session.with(|s| s.remaining_s()).unwrap_or(1);
-            if remaining == 0 {
-                if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
-                    let _ = window.emit(event::TIME_UP, ());
-                    // Auto-submit rather than trusting the frontend to do it:
-                    // a student who has broken the UI must not thereby avoid
-                    // submission.
-                    let _ = commands::do_submit(&state, &window).await;
+        }
+    });
+}
+
+/// Submit the moment the deadline passes, whatever state the exam is in.
+///
+/// Auto-submit lives in this process rather than in the frontend: a student who
+/// has broken the UI must not thereby avoid submission, and the answers are
+/// already on the server - submitting finalises the attempt, it does not upload
+/// it. So "unfinished" is not a special case here. It is just the attempt as it
+/// stood when the clock ran out.
+fn spawn_deadline_watch(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(DEADLINE_CHECK_INTERVAL);
+        // Delay rather than burst: if a submit attempt fails and takes a while
+        // doing it, the retry waits a tick instead of hammering the server.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        // Whether this sitting has already been told its time is up, and
+        // whether a failed submit has already been logged. Held here rather
+        // than in shared state because they belong to the loop: they clear
+        // themselves when the session ends, ready for the next one.
+        let mut announced = false;
+        let mut failure_logged = false;
+
+        loop {
+            ticker.tick().await;
+
+            let state = handle.state::<AppState>();
+            // False once a receipt exists, so a submitted exam stops the loop
+            // without a second flag to keep in step.
+            if !state.session.is_active() {
+                announced = false;
+                failure_logged = false;
+                continue;
+            }
+
+            if state.session.with(|s| s.remaining_s()).unwrap_or(1) > 0 {
+                continue;
+            }
+
+            let Some(window) = handle.get_webview_window(MAIN_WINDOW) else {
+                continue;
+            };
+
+            // Tell the UI first. It freezes the exam behind this, so the
+            // student stops typing into a form the server is already refusing,
+            // rather than finding out when a save fails.
+            if !announced {
+                let _ = window.emit(event::TIME_UP, ());
+                announced = true;
+            }
+
+            // Offline at the deadline: this fails, `is_active` stays true
+            // because no receipt was written, and the next tick tries again.
+            if let Err(error) = commands::do_submit(&state, &window).await {
+                // Once per sitting, not once a second: a submit that cannot
+                // land is worth a line in the proctor log - it is the record
+                // of a student who ran out of time and could not hand in - but
+                // a retry loop writing to that log every second would bury it.
+                if !failure_logged {
+                    failure_logged = true;
+                    state
+                        .events
+                        .record(kind::SUBMIT_FAILED, Some(error.to_string()));
                 }
             }
         }

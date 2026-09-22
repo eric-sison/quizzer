@@ -4,9 +4,11 @@ import {
   ChevronLeft,
   ChevronRight,
   CloudOff,
+  Loader2,
   Lock,
   Timer,
 } from "lucide-react"
+import { countAnswered } from "@workspace/quiz-core"
 import { QuestionView, seededShuffle } from "@workspace/quiz-ui"
 
 import { Button } from "@workspace/ui/components/button"
@@ -21,10 +23,21 @@ type ExamProps = {
   strikeNotice: string | null
   unsaved: Set<string>
   submitting: boolean
+  /** The deadline has passed and the submit is on its way. */
+  timeUp: boolean
+  /** When the freeze began, for deciding it has gone on too long. */
+  timeUpAt: number | null
   onAnswer: (questionId: string, value: AnswerValue) => void
   onSubmit: () => void
   onDismissStrike: () => void
 }
+
+/**
+ * How long the submit may take before the student is told something is wrong.
+ * Long enough to cover a slow network and the retry behind it, short enough
+ * that nobody sits in front of an unexplained spinner.
+ */
+const STALLED_SUBMIT_MS = 10_000
 
 function formatClock(totalSeconds: number) {
   const s = Math.max(0, totalSeconds)
@@ -45,6 +58,8 @@ export function Exam({
   strikeNotice,
   unsaved,
   submitting,
+  timeUp,
+  timeUpAt,
   onAnswer,
   onSubmit,
   onDismissStrike,
@@ -70,9 +85,9 @@ export function Exam({
 
   const total = questions.length
   const question = questions[at]
-  const answered = questions.filter(
-    (q) => snapshot.answers[q.id] !== undefined
-  ).length
+  // Counted through the shared rule rather than by presence in the answers
+  // map, so the figure in the header is the one the results screen will show.
+  const answered = countAnswered(questions, snapshot.answers)
   const urgent = remaining <= 300
   const last = at >= total - 1
 
@@ -96,6 +111,8 @@ export function Exam({
         />
       ) : null}
 
+      {timeUp ? <TimeUpBanner /> : null}
+
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-10">
           {question ? (
@@ -110,6 +127,10 @@ export function Exam({
                 answer={{
                   value: snapshot.answers[question.id],
                   onChange: (value) => onAnswer(question.id, value),
+                  // Past the deadline the server refuses writes. Letting the
+                  // inputs stay live would invite a student to type an answer
+                  // that was never going to count.
+                  readOnly: timeUp,
                 }}
                 // Data URIs Rust fetched at session start; the webview has no
                 // network, so an id missing here renders no image at all.
@@ -134,7 +155,13 @@ export function Exam({
 
       <footer className="shrink-0 border-t border-border">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 px-6 py-4">
-          {confirming ? (
+          {timeUp ? (
+            <FinishingUp
+              since={timeUpAt}
+              submitting={submitting}
+              onRetry={onSubmit}
+            />
+          ) : confirming ? (
             <SubmitConfirmation
               answered={answered}
               total={total}
@@ -228,6 +255,93 @@ function SubmitConfirmation({
         <Button size="lg" variant="outline" disabled={submitting} onClick={onCancel}>
           Keep working
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The footer between the deadline passing and the results screen arriving.
+ *
+ * Normally a second or two. When it is not - the machine is offline, or the
+ * server is unreachable - it says so and offers the button, because a spinner
+ * that never resolves tells a student who has just lost their exam nothing at
+ * all. The retry is the same submit the deadline watcher is attempting on its
+ * own; pressing it only makes the next attempt sooner.
+ */
+function FinishingUp({
+  since,
+  submitting,
+  onRetry,
+}: {
+  since: number | null
+  submitting: boolean
+  onRetry: () => void
+}) {
+  const [stalled, setStalled] = React.useState(false)
+
+  React.useEffect(() => {
+    if (since === null) return
+    // Measured from when the freeze began rather than from this mount, so a
+    // re-render does not restart the student's patience.
+    const id = window.setTimeout(
+      () => setStalled(true),
+      Math.max(0, since + STALLED_SUBMIT_MS - Date.now())
+    )
+    return () => window.clearTimeout(id)
+  }, [since])
+
+  if (!stalled) {
+    return (
+      <p
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+        aria-live="polite"
+      >
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        Finishing your exam. This takes a moment.
+      </p>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
+      <p className="flex items-start gap-2 text-sm">
+        <CloudOff className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+        <span>
+          Your exam is still being submitted. It is retrying by itself - the
+          answers you saved are already on the server. Tell your teacher if this
+          does not clear.
+        </span>
+      </p>
+      <div>
+        <Button size="lg" disabled={submitting} onClick={onRetry}>
+          {submitting ? "Submitting…" : "Try again now"}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Shown between the deadline passing and the results screen arriving.
+ *
+ * It says the work is safe, because that is the question a student actually
+ * has at this moment: the paper has frozen under them and they did not press
+ * anything.
+ */
+function TimeUpBanner() {
+  return (
+    <div
+      className="border-b border-border bg-muted/60 px-6 py-3"
+      role="status"
+      aria-live="assertive"
+    >
+      <div className="mx-auto flex w-full max-w-3xl items-center gap-2.5 text-sm">
+        <Timer className="size-4 shrink-0" aria-hidden />
+        <p>
+          <strong className="font-medium">Time is up.</strong> Your answers are
+          being submitted as they stand - there is nothing left to do.
+        </p>
       </div>
     </div>
   )

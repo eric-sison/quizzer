@@ -16,6 +16,7 @@ import { z } from "zod"
 import { QUESTION_KINDS } from "./question"
 import {
   emptyRichDoc,
+  isRichDocEmpty,
   richDocFromText,
   richDocSchema,
   type RichDoc,
@@ -104,6 +105,40 @@ export const answerValueSchema = z.union([
   z.record(z.string(), z.string()),
 ])
 export type AnswerValue = z.infer<typeof answerValueSchema>
+
+/**
+ * Whether a stored answer counts as given.
+ *
+ * Presence in the answers map is not the same as having answered: a student
+ * who types into a box and then clears it leaves an entry behind, and a paper
+ * reported as "15 of 15 answered" with three blanks in it would be a lie told
+ * at the one moment a student can no longer do anything about it.
+ *
+ * Lives here beside `answerValueSchema` because it has to know every shape an
+ * answer can take, and a second reading of that union somewhere else is a
+ * second thing to keep in step.
+ */
+export function isAnswered(value: AnswerValue | undefined): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === "string") return value.trim().length > 0
+  if (Array.isArray(value)) return value.some((entry) => entry.trim().length > 0)
+
+  // An essay is a rich document, a matching answer a record of leftId ->
+  // rightId. Both arrive as objects, told apart the way `answerAsRichDoc`
+  // tells them apart.
+  if (!("type" in value) || value.type !== "doc") {
+    return Object.keys(value).length > 0
+  }
+  return !isRichDocEmpty(value as RichDoc)
+}
+
+/** How many of `questions` carry an answer worth counting. */
+export function countAnswered(
+  questions: readonly { id: string }[],
+  answers: Record<string, AnswerValue>
+): number {
+  return questions.filter((question) => isAnswered(answers[question.id])).length
+}
 
 /** An essay answer, however it was stored. */
 export function answerAsRichDoc(value: AnswerValue | undefined): RichDoc {

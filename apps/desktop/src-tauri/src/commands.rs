@@ -253,7 +253,13 @@ pub async fn do_submit<R: Runtime>(
 ) -> AppResult<Receipt> {
     // Already submitted? Hand back the receipt we have rather than calling out
     // again - this is the common case when a student double-clicks.
+    //
+    // Re-emits rather than returning quietly: the caller may be the deadline
+    // watcher retrying because the frontend never showed the results screen,
+    // and a silent return would leave it waiting on an event it already
+    // missed.
     if let Ok(Some(receipt)) = state.session.with(|s| s.receipt.clone()) {
+        let _ = window.emit(event::SUBMITTED, &receipt);
         return Ok(receipt);
     }
 

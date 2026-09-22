@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { answerAsRichDoc } from "../manifest"
+import { answerAsRichDoc, countAnswered, isAnswered } from "../manifest"
 import { AnswerLeakError, assertNoAnswerLeak, extractKey, project } from "../project"
 import { createQuestion, createQuizDoc, quizDocSchema } from "../question"
 import { emptyRichDoc, richDocFromText, richDocSchema } from "../rich-text"
@@ -392,3 +392,52 @@ describe("answerAsRichDoc with a matching record", () => {
   })
 })
 
+/**
+ * What a student is told they answered.
+ *
+ * The exam header counts this while they work and the results screen counts it
+ * again after the deadline, so a disagreement between the two would surface at
+ * the one moment nothing can be done about it.
+ */
+describe("isAnswered", () => {
+  it("counts a real answer of every shape", () => {
+    expect(isAnswered("option-2")).toBe(true)
+    expect(isAnswered(["option-1", "option-3"])).toBe(true)
+    expect(isAnswered(richDocFromText("Photosynthesis converts light"))).toBe(true)
+    expect(isAnswered({ "left-1": "right-2" })).toBe(true)
+  })
+
+  it("does not count a box that was touched and left blank", () => {
+    // Every one of these puts an entry in the answers map. None of them is an
+    // answer, and a paper reporting them as answered would be lying.
+    expect(isAnswered(undefined)).toBe(false)
+    expect(isAnswered("")).toBe(false)
+    expect(isAnswered("   ")).toBe(false)
+    expect(isAnswered([])).toBe(false)
+    expect(isAnswered(["", "  "])).toBe(false)
+    expect(isAnswered(richDocFromText(""))).toBe(false)
+    expect(isAnswered(richDocFromText("  \n  "))).toBe(false)
+    expect(isAnswered({})).toBe(false)
+  })
+
+  it("counts a partly filled answer as answered", () => {
+    // Half a fill-in-the-blank is still work done, and the student should not
+    // be told they left the question alone.
+    expect(isAnswered(["hydrogen", ""])).toBe(true)
+  })
+})
+
+describe("countAnswered", () => {
+  it("counts over the questions asked, not the entries stored", () => {
+    const questions = [{ id: "q1" }, { id: "q2" }, { id: "q3" }]
+    const answered = countAnswered(questions, {
+      q1: "option-1",
+      q2: "   ",
+      // An answer left behind by a question that is no longer on the paper
+      // must not inflate the total.
+      "q-removed": "option-9",
+    })
+
+    expect(answered).toBe(1)
+  })
+})
