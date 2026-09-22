@@ -36,16 +36,7 @@ export type SaveStatus =
   /** Terminal until the teacher reloads. */
   | { kind: "conflict"; message: string }
 
-/**
- * How long the editor stays quiet after the last keystroke before saving.
- *
- * This is a trailing debounce: each edit restarts the clock, so a teacher
- * typing a prompt sends one request rather than one per pause. It sits at a
- * couple of seconds to ride out the pauses WITHIN a sentence - at 800ms, where
- * it started, stopping to think mid-clause was enough to send another PUT - and
- * no longer, because the window it opens is also the work a crashed tab loses.
- */
-export const AUTOSAVE_DELAY_MS = 2_500
+export const AUTOSAVE_DELAY_MS = 800
 // Five attempts total: the initial save plus retries at 1s, 2s, 4s and 8s.
 const MAX_AUTO_ATTEMPTS = 5
 const BACKOFF_BASE_MS = 1_000
