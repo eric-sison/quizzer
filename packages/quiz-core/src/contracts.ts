@@ -24,6 +24,10 @@ export const API_ERROR_CODES = [
   "not_yet_open",
   "revoked",
   "session_conflict",
+  /** The claim needs a signed-in student and none was presented. */
+  "auth_required",
+  /** Signed in, but the account may not sit exams (suspended, delisted domain). */
+  "student_not_allowed",
   // teacher surface (web)
   "unauthorized",
   "forbidden",
@@ -115,6 +119,82 @@ export type CreateQuizRequest = z.infer<typeof createQuizRequestSchema>
 export type SaveDraftRequest = z.infer<typeof saveDraftRequestSchema>
 export type SaveDraftResponse = z.infer<typeof saveDraftResponseSchema>
 export type PublishResponse = z.infer<typeof publishResponseSchema>
+
+/**
+ * The admin surface: institution configuration, the domain allowlist, and
+ * membership/role management. Roles are only ever written through these
+ * endpoints (behind requireAdmin) - no other request body anywhere carries
+ * a role.
+ */
+export const memberRoleSchema = z.enum(["admin", "teacher", "student"])
+export const memberStatusSchema = z.enum(["active", "suspended"])
+
+export const institutionSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  autoProvisionStudents: z.boolean(),
+})
+
+export const allowedDomainSchema = z.strictObject({
+  id: z.string(),
+  domain: z.string(),
+  createdAt: z.string(),
+})
+
+export const institutionConfigSchema = z.strictObject({
+  institution: institutionSchema,
+  domains: z.array(allowedDomainSchema),
+})
+
+export const updateInstitutionRequestSchema = z.strictObject({
+  name: z.string().min(1).max(200).optional(),
+  autoProvisionStudents: z.boolean().optional(),
+})
+
+/**
+ * A bare domain: no scheme, no "@", no port, at least one dot. Lowercased by
+ * the server before storage; matched whole against the part of a signing-in
+ * email after its last "@".
+ */
+export const addDomainRequestSchema = z.strictObject({
+  domain: z
+    .string()
+    .min(3)
+    .max(253)
+    .regex(
+      /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i,
+      "Not a valid domain name."
+    ),
+})
+
+export const memberSchema = z.strictObject({
+  userId: z.string(),
+  name: z.string(),
+  email: z.string(),
+  role: memberRoleSchema,
+  status: memberStatusSchema,
+  createdAt: z.string(),
+})
+
+export const memberListSchema = z.strictObject({
+  members: z.array(memberSchema),
+})
+
+export const setMemberRoleRequestSchema = z.strictObject({
+  role: memberRoleSchema,
+})
+
+export const setMemberStatusRequestSchema = z.strictObject({
+  status: memberStatusSchema,
+})
+
+export type MemberRole = z.infer<typeof memberRoleSchema>
+export type MemberStatus = z.infer<typeof memberStatusSchema>
+export type Institution = z.infer<typeof institutionSchema>
+export type AllowedDomain = z.infer<typeof allowedDomainSchema>
+export type InstitutionConfig = z.infer<typeof institutionConfigSchema>
+export type Member = z.infer<typeof memberSchema>
 
 /**
  * The exam surface.
