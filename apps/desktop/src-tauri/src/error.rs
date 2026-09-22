@@ -35,6 +35,21 @@ pub enum AppError {
     #[error("No exam session is active.")]
     NoSession,
 
+    #[error("Sign in with your school account before starting the exam.")]
+    NotSignedIn,
+
+    #[error("You're already signed in.")]
+    AlreadySignedIn,
+
+    #[error("The sign-in code expired before it was used. Start again for a fresh one.")]
+    SignInExpired,
+
+    #[error("That sign-in was declined. Try again, or ask your teacher for help.")]
+    SignInDenied,
+
+    #[error("This account isn't allowed to take exams here. Ask your teacher for help.")]
+    AccountNotAllowed,
+
     #[error("The exam server returned an unexpected response.")]
     ServerError,
 }
@@ -52,6 +67,11 @@ impl AppError {
             Self::SessionConflict => "session_conflict",
             Self::NetworkUnavailable => "network_unavailable",
             Self::NoSession => "no_session",
+            Self::NotSignedIn => "not_signed_in",
+            Self::AlreadySignedIn => "already_signed_in",
+            Self::SignInExpired => "sign_in_expired",
+            Self::SignInDenied => "sign_in_denied",
+            Self::AccountNotAllowed => "account_not_allowed",
             Self::ServerError => "server_error",
         }
     }
@@ -74,6 +94,12 @@ impl AppError {
             "revoked" => Self::Revoked,
             "session_conflict" => Self::SessionConflict,
             "invalid_token" => Self::InvalidLink,
+            // No or invalid student token on the claim. The command layer also
+            // resets the auth store on this one, so the UI reopens sign-in.
+            "auth_required" => Self::NotSignedIn,
+            // Suspended account or delisted domain: signing in again won't fix
+            // it, which is why it is distinct from `auth_required`.
+            "student_not_allowed" => Self::AccountNotAllowed,
             _ => Self::ServerError,
         }
     }

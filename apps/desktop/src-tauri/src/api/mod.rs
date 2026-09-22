@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::AppError;
 use crate::session::{ExamManifest, Receipt};
 
 #[cfg(not(feature = "mock-api"))]
@@ -17,6 +18,8 @@ pub use live::ApiClient;
 mod mock;
 #[cfg(feature = "mock-api")]
 pub use mock::ApiClient;
+#[cfg(all(test, feature = "mock-api"))]
+pub use mock::MOCK_STUDENT_TOKEN;
 
 // Only the live client sends these; the fixture backend has no use for them.
 #[cfg_attr(feature = "mock-api", allow(dead_code))]
@@ -33,6 +36,14 @@ pub fn platform_tag() -> &'static str {
     }
 }
 
+/// The OAuth client this app identifies as when it asks for a device code.
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub const DEVICE_CLIENT_ID: &str = "quizzer-desktop";
+
+/// The grant type the device flow polls with, verbatim from RFC 8628.
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
 // --- requests ---------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
@@ -47,6 +58,20 @@ pub struct StartSessionRequest {
 #[cfg_attr(feature = "mock-api", allow(dead_code))]
 pub struct PreviewRequest {
     pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct DeviceCodeRequest {
+    pub client_id: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct DeviceTokenRequest<'a> {
+    pub grant_type: &'static str,
+    pub device_code: &'a str,
+    pub client_id: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -91,6 +116,97 @@ pub struct ProctorEvent {
 }
 
 // --- responses --------------------------------------------------------------
+
+/// What starting the device flow hands back. Parsed only as far as the client
+/// needs: `verification_uri_complete` is deliberately dropped, because handing
+/// the student a pre-filled clickable path is exactly what this UI must not do
+/// (navigation is blocked by design; they read the code and type it elsewhere).
+#[derive(Debug, Deserialize)]
+pub struct DeviceCodeResponse {
+    /// The polling credential. Never leaves Rust.
+    pub device_code: String,
+    /// The short code the student types. Public by design.
+    pub user_code: String,
+    /// Where they type it. Verified against `WEB_ORIGIN` before it is stored.
+    pub verification_uri: String,
+    /// Seconds until the codes above stop working.
+    pub expires_in: u64,
+    /// Seconds between polls; the server may say "slow_down" to stretch it.
+    pub interval: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct DeviceTokenResponse {
+    pub access_token: String,
+}
+
+/// The device flow's own error dialect: a 400 whose body says why, and only
+/// one of the reasons is actually an error. Not the app's `{"error":{"code"}}`
+/// envelope - Better Auth speaks RFC 8628 here.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct DeviceTokenError {
+    pub error: String,
+}
+
+/// Why one poll of the token endpoint did not produce a token.
+///
+/// (The fixture backend only ever answers with a subset of these; the live
+/// client and the unit tests construct them all.)
+#[derive(Debug)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub enum PollOutcome {
+    /// The student has not approved yet. Keep polling.
+    Pending,
+    /// Polling too fast; the server wants 5 more seconds between polls.
+    SlowDown,
+    /// The device code is dead - timed out or consumed. Start over.
+    Expired,
+    /// The student (or their domain policy) said no.
+    Denied,
+    /// Anything else: network trouble, an unrecognised code. The poll loop
+    /// treats it as transient and keeps going until the code expires. The
+    /// payload is carried for tests and Debug output; the loop never reads it.
+    Other(#[allow(dead_code)] AppError),
+}
+
+impl PollOutcome {
+    /// Map an RFC 8628 error code onto a poll outcome. Unknown codes collapse
+    /// to `Other` rather than leaking the raw string, same as
+    /// `AppError::from_server_code`. (Live client only; the fixture returns
+    /// outcomes directly.)
+    #[cfg_attr(feature = "mock-api", allow(dead_code))]
+    pub fn from_oauth_code(code: &str) -> Self {
+        match code {
+            "authorization_pending" => Self::Pending,
+            "slow_down" => Self::SlowDown,
+            "expired_token" => Self::Expired,
+            "access_denied" => Self::Denied,
+            // The device code is not one the server recognises any more -
+            // consumed, revoked, or never real. Whatever the history, the fix
+            // is the same as an expiry: start a fresh attempt.
+            "invalid_grant" => Self::Expired,
+            _ => Self::Other(AppError::ServerError),
+        }
+    }
+}
+
+/// Who the session token belongs to, from `GET /api/auth/get-session`. The
+/// endpoint returns a much larger object; this parses only what the client
+/// shows, and gives anything else nowhere to land.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct GetSessionResponse {
+    pub user: SessionUser,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "mock-api", allow(dead_code))]
+pub struct SessionUser {
+    pub name: String,
+    pub email: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct StartSessionResponse {
@@ -152,3 +268,41 @@ pub struct ApiErrorDetail {
 }
 
 pub type SubmitResponse = Receipt;
+
+#[cfg(test)]
+mod poll_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn each_oauth_code_maps_to_its_outcome() {
+        assert!(matches!(
+            PollOutcome::from_oauth_code("authorization_pending"),
+            PollOutcome::Pending
+        ));
+        assert!(matches!(
+            PollOutcome::from_oauth_code("slow_down"),
+            PollOutcome::SlowDown
+        ));
+        assert!(matches!(
+            PollOutcome::from_oauth_code("expired_token"),
+            PollOutcome::Expired
+        ));
+        assert!(matches!(
+            PollOutcome::from_oauth_code("access_denied"),
+            PollOutcome::Denied
+        ));
+        // A dead device code, whatever killed it, means "start over".
+        assert!(matches!(
+            PollOutcome::from_oauth_code("invalid_grant"),
+            PollOutcome::Expired
+        ));
+    }
+
+    #[test]
+    fn an_unknown_code_collapses_rather_than_leaking() {
+        assert!(matches!(
+            PollOutcome::from_oauth_code("some_future_code"),
+            PollOutcome::Other(AppError::ServerError)
+        ));
+    }
+}

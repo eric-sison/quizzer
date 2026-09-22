@@ -9,13 +9,15 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WebviewWindow};
 
-use crate::api::{ApiClient, PreviewResponse};
+use crate::api::{ApiClient, PollOutcome, PreviewResponse};
+use crate::auth::{verify_verification_uri, AuthSnapshot, AuthStore};
 use crate::error::{AppError, AppResult};
 use crate::events::{kind, EventQueue};
 use crate::lockdown::{self, LockdownReport};
@@ -33,6 +35,9 @@ pub const STRIKE_WARNING_THRESHOLD: u32 = 3;
 pub struct AppState {
     pub api: ApiClient,
     pub session: SessionStore,
+    /// Who is signed in, and the session token that proves it. Held exactly
+    /// like `session`: the credential never crosses the IPC boundary.
+    pub auth: AuthStore,
     pub events: EventQueue,
     /// Monotonic counter so the server can discard answers that arrive out of
     /// order after a retry.
@@ -51,6 +56,7 @@ impl AppState {
         Self {
             api: ApiClient::new(),
             session: SessionStore::default(),
+            auth: AuthStore::default(),
             events: EventQueue::default(),
             answer_seq: AtomicU64::new(0),
             lockdown: Mutex::new(LockdownReport::default()),
@@ -72,6 +78,10 @@ pub mod event {
     pub const TIME_UP: &str = "exam://time-up";
     pub const LOCKDOWN: &str = "exam://lockdown";
     pub const REVOKED: &str = "exam://revoked";
+    /// Carries an `AuthSnapshot` whenever the sign-in state changes on the
+    /// Rust side - a poll task resolving is the case the frontend cannot see
+    /// coming any other way.
+    pub const AUTH_STATUS: &str = "auth://status";
 }
 
 #[derive(Clone, Serialize)]
@@ -125,6 +135,184 @@ pub async fn preview_link(raw: String, state: State<'_, AppState>) -> AppResult<
     })
 }
 
+// ---------------------------------------------------------------------------
+// Student sign-in (OAuth device flow)
+// ---------------------------------------------------------------------------
+
+/// Start a device-flow sign-in: ask the server for a code, hand the student
+/// the public half, and spawn the poll task that waits for their approval.
+///
+/// The returned snapshot is already `pending`; everything after it arrives by
+/// `auth://status` event, because the resolution happens on the poll task's
+/// clock, not the caller's.
+#[tauri::command]
+pub async fn begin_sign_in<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+) -> AppResult<AuthSnapshot> {
+    // Mid-exam the identity is settled - it is on the claim the server already
+    // holds - and signed in there is nothing to begin. Both refusals also keep
+    // a hostile webview from using this command to churn the auth state.
+    if state.session.is_active() {
+        return Err(AppError::SessionConflict);
+    }
+    if state.auth.is_signed_in() {
+        return Err(AppError::AlreadySignedIn);
+    }
+
+    let device = state.api.request_device_code().await?;
+
+    // The server told us where to send the student. Refuse to pass that on
+    // unless it is the web origin this build was compiled to trust - the same
+    // component-wise check `parse_link` applies to the API origin. A tampered
+    // response must not turn this screen into a phishing instruction.
+    verify_verification_uri(&device.verification_uri)?;
+
+    let expires_at = now_epoch_secs() + device.expires_in;
+    let generation = state.auth.begin_pending(
+        device.device_code,
+        device.user_code,
+        device.verification_uri,
+        expires_at,
+    );
+
+    spawn_device_poll(window, generation, device.interval, expires_at);
+
+    Ok(state.auth.snapshot())
+}
+
+/// The poll half of the device flow, on its own task so `begin_sign_in` can
+/// return the code for the student to read while the waiting happens.
+///
+/// Lifecycle: the task carries the attempt's generation, and every write back
+/// into the store is conditional on that generation still being the live
+/// pending attempt. Cancelling, signing out, or starting a new attempt bumps
+/// the generation, so an orphaned task notices on its next tick and exits
+/// without touching anything - no handle to the task is kept, none is needed.
+/// The device code itself stays in the store; the task borrows it per poll.
+fn spawn_device_poll<R: Runtime>(
+    window: WebviewWindow<R>,
+    generation: u64,
+    interval_s: u64,
+    expires_at: u64,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval_s = interval_s.max(1);
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(interval_s)).await;
+
+            let state = window.state::<AppState>();
+
+            // Orphaned: cancelled, superseded, or already resolved.
+            let Some(device_code) = state.auth.pending_device_code(generation) else {
+                return;
+            };
+
+            // The server enforces this expiry too; checking it here is what
+            // stops an unattended machine polling a dead code forever.
+            if now_epoch_secs() >= expires_at {
+                fail_sign_in(&window, &state, generation, &AppError::SignInExpired);
+                return;
+            }
+
+            match state.api.poll_device_token(&device_code).await {
+                Ok(token) => {
+                    // Approved. Fetch who they are before announcing anything:
+                    // an identity chip is the whole point of the panel.
+                    match state.api.get_student_identity(&token).await {
+                        Ok((name, email)) => {
+                            if state
+                                .auth
+                                .set_signed_in_if_current(generation, token, name, email)
+                            {
+                                let _ = window.emit(event::AUTH_STATUS, state.auth.snapshot());
+                            }
+                        }
+                        Err(_) => {
+                            // A token we cannot put a name to is not a sign-in
+                            // the student can verify, so it is not one at all.
+                            fail_sign_in(&window, &state, generation, &AppError::ServerError);
+                        }
+                    }
+                    return;
+                }
+                Err(PollOutcome::Pending) => {}
+                Err(PollOutcome::SlowDown) => interval_s += 5,
+                Err(PollOutcome::Expired) => {
+                    fail_sign_in(&window, &state, generation, &AppError::SignInExpired);
+                    return;
+                }
+                Err(PollOutcome::Denied) => {
+                    fail_sign_in(&window, &state, generation, &AppError::SignInDenied);
+                    return;
+                }
+                // Transient (network drop) or unrecognised. Keep polling: the
+                // expiry above bounds how long, and giving up on one blip
+                // would fail a student whose Wi-Fi hiccuped mid-approval.
+                Err(PollOutcome::Other(_)) => {}
+            }
+        }
+    });
+}
+
+/// End a pending attempt as signed-out and tell the frontend why, with an
+/// `AppError` code in the snapshot's `error` field. Only the attempt's own
+/// generation may do this, so a stale task cannot blame a fresh attempt.
+fn fail_sign_in<R: Runtime>(
+    window: &WebviewWindow<R>,
+    state: &AppState,
+    generation: u64,
+    reason: &AppError,
+) {
+    if state.auth.fail_if_current(generation) {
+        let _ = window.emit(
+            event::AUTH_STATUS,
+            AuthSnapshot::signed_out_with_error(reason),
+        );
+    }
+}
+
+/// Abandon a pending sign-in. Idempotent, and quietly a no-op outside one:
+/// there is nothing sensitive about cancelling nothing.
+#[tauri::command]
+pub fn cancel_sign_in<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+) -> AuthSnapshot {
+    state.auth.cancel_pending();
+    let snapshot = state.auth.snapshot();
+    let _ = window.emit(event::AUTH_STATUS, &snapshot);
+    snapshot
+}
+
+#[tauri::command]
+pub fn get_auth_state(state: State<'_, AppState>) -> AuthSnapshot {
+    state.auth.snapshot()
+}
+
+/// Sign the student out. Refused mid-exam - the sitting is bound to the
+/// identity that claimed it. The server-side revocation is best-effort: the
+/// local state is cleared whatever the network does, because a student walking
+/// away from a shared machine must not stay signed in over a blip.
+#[tauri::command]
+pub async fn sign_out<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+) -> AppResult<AuthSnapshot> {
+    if state.session.is_active() {
+        return Err(AppError::SessionConflict);
+    }
+
+    if let Some(token) = state.auth.take_signed_out() {
+        let _ = state.api.sign_out(&token).await;
+    }
+
+    let snapshot = state.auth.snapshot();
+    let _ = window.emit(event::AUTH_STATUS, &snapshot);
+    Ok(snapshot)
+}
+
 /// Claim the exam session and enter lockdown.
 ///
 /// Lockdown is engaged only *after* the server confirms the session, so a bad
@@ -139,8 +327,26 @@ pub async fn start_session<R: Runtime>(
         return Err(AppError::SessionConflict);
     }
 
+    // The claim is made *as the student*: no sign-in, no exam. Checked before
+    // the link is even parsed, the same order the server would answer in.
+    let Some(student_token) = state.auth.signed_in_token() else {
+        return Err(AppError::NotSignedIn);
+    };
+
     let link = parse_link(&raw)?;
-    let response = state.api.start_session(link.token).await?;
+    let response = match state.api.start_session(link.token, &student_token).await {
+        Ok(response) => response,
+        // The server no longer honours the token we hold - it expired or was
+        // revoked from the other side. Holding onto it would leave the UI
+        // offering a Begin that can only fail the same way again, so drop to
+        // signed-out and announce it: the sign-in panel reopens itself.
+        Err(AppError::NotSignedIn) => {
+            state.auth.take_signed_out();
+            let _ = window.emit(event::AUTH_STATUS, state.auth.snapshot());
+            return Err(AppError::NotSignedIn);
+        }
+        Err(other) => return Err(other),
+    };
 
     // Trust the server's clock, not ours: a student who moves the system clock
     // forward must not be able to shorten or extend their own deadline.

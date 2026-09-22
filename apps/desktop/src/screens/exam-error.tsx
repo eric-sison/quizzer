@@ -48,6 +48,28 @@ const GUIDANCE: Record<ErrorCode, { title: string; advice: string }> = {
     title: "The exam session ended",
     advice: "Start again from your quiz link.",
   },
+  not_signed_in: {
+    title: "You need to sign in first",
+    advice:
+      "Sign in with your school account on the start screen, then begin the exam.",
+  },
+  already_signed_in: {
+    title: "You're already signed in",
+    advice: "Go back and begin the exam from your quiz link.",
+  },
+  sign_in_expired: {
+    title: "That sign-in code expired",
+    advice: "Start the sign-in again to get a fresh code.",
+  },
+  sign_in_denied: {
+    title: "That sign-in was declined",
+    advice: "Try signing in again. If it keeps happening, ask your teacher.",
+  },
+  account_not_allowed: {
+    title: "This account can't take exams here",
+    advice:
+      "Sign in with your school account. If you already did, ask your teacher to check your account.",
+  },
   server_error: {
     title: "Something went wrong",
     advice: "Try again. If it keeps happening, tell your teacher.",

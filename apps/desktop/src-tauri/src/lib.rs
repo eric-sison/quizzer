@@ -9,6 +9,7 @@
 //! See `lockdown/mod.rs` for what the kiosk layer can and cannot enforce.
 
 mod api;
+mod auth;
 mod commands;
 mod error;
 mod events;
@@ -70,6 +71,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::validate_link,
             commands::preview_link,
+            commands::begin_sign_in,
+            commands::cancel_sign_in,
+            commands::get_auth_state,
+            commands::sign_out,
             commands::start_session,
             commands::save_answer,
             commands::submit_exam,

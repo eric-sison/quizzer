@@ -193,8 +193,18 @@ POST /api/exam/submit    { idempotency_key } -> { receipt_id, submitted_at,
 ```
 
 All but the first authenticate with `Authorization: Bearer <session_jwt>`.
-Failures return `{"error": {"code": "..."}}` using codes from
+The first - the claim - authenticates as the *student* instead, with the
+Better Auth session token from the sign-in below; `/api/exam/preview` stays
+unauthenticated. Failures return `{"error": {"code": "..."}}` using codes from
 `src-tauri/src/error.rs`.
+
+Student sign-in uses the OAuth device flow against Better Auth on the same
+origin (`/api/auth/device/code`, `/api/auth/device/token`,
+`/api/auth/get-session`, `/api/auth/sign-out`). The flow lives in
+`src-tauri/src/auth.rs`, holds the session token and device code in Rust under
+the same rule as the exam JWT, and pins the verification address to the
+compile-time `QUIZZER_WEB_ORIGIN` (default `http://localhost:3001`) before
+showing it to the student.
 
 **Rules the server must own**, because the client cannot:
 
@@ -235,6 +245,11 @@ the OS when the process dies, so a kill is always recoverable.
 
 ### Fixture links
 
+Begin requires a signed-in student first. With `--features mock-api` the
+device flow approves itself after a couple of polls - press "Sign in", watch
+the code panel, and the fixture student arrives a few seconds later without a
+browser.
+
 With `--features mock-api`, paste `http://localhost:3000/e/<token>`:
 
 | Token | Exercises |
@@ -261,8 +276,14 @@ The backend origin is compiled in and links from any other origin are rejected
 before a single byte is sent:
 
 ```bash
-QUIZZER_API_ORIGIN=https://exams.school.edu pnpm --filter desktop tauri build
+QUIZZER_API_ORIGIN=https://exams.school.edu \
+QUIZZER_WEB_ORIGIN=https://quizzer.school.edu \
+  pnpm --filter desktop tauri build
 ```
+
+`QUIZZER_WEB_ORIGIN` is where sign-in verification happens; a device-code
+response pointing anywhere else is refused before the address reaches the
+student.
 
 ### Tests
 

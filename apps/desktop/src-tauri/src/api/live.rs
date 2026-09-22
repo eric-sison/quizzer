@@ -8,9 +8,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::{
-    ApiErrorBody, EventBatchRequest, HeartbeatRequest, HeartbeatResponse, PreviewRequest,
-    PreviewResponse, ProctorEvent, SaveAnswerRequest, StartSessionRequest, StartSessionResponse,
-    SubmitRequest, SubmitResponse, CLIENT_VERSION,
+    ApiErrorBody, DeviceCodeRequest, DeviceCodeResponse, DeviceTokenError, DeviceTokenRequest,
+    DeviceTokenResponse, EventBatchRequest, GetSessionResponse, HeartbeatRequest,
+    HeartbeatResponse, PollOutcome, PreviewRequest, PreviewResponse, ProctorEvent,
+    SaveAnswerRequest, StartSessionRequest, StartSessionResponse, SubmitRequest, SubmitResponse,
+    CLIENT_VERSION, DEVICE_CLIENT_ID, DEVICE_GRANT_TYPE,
 };
 use crate::error::{AppError, AppResult};
 use crate::session::API_ORIGIN;
@@ -62,13 +64,119 @@ impl ApiClient {
             .await
     }
 
-    pub async fn start_session(&self, token: String) -> AppResult<StartSessionResponse> {
+    /// Claim the exam session. `student_token` is the Better Auth session
+    /// token from the device flow - the claim is the one exam call that
+    /// authenticates as the *student*; everything after it uses the exam JWT
+    /// the claim hands back.
+    pub async fn start_session(
+        &self,
+        token: String,
+        student_token: &str,
+    ) -> AppResult<StartSessionResponse> {
         let body = StartSessionRequest {
             token,
             client_version: CLIENT_VERSION,
             platform: super::platform_tag(),
         };
-        self.post("/api/exam/session", None, &body).await
+        self.post("/api/exam/session", Some(student_token), &body)
+            .await
+    }
+
+    // --- student sign-in (OAuth device flow, RFC 8628) -----------------------
+
+    /// Ask the server to start a device-flow sign-in. Unauthenticated by
+    /// nature - this call is how authentication begins.
+    pub async fn request_device_code(&self) -> AppResult<DeviceCodeResponse> {
+        self.post(
+            "/api/auth/device/code",
+            None,
+            &DeviceCodeRequest {
+                client_id: DEVICE_CLIENT_ID,
+            },
+        )
+        .await
+    }
+
+    /// One poll of the token endpoint. `Ok` carries the session token; `Err`
+    /// says why there isn't one yet (or ever). Handled by hand rather than
+    /// through `decode` because this endpoint speaks RFC 8628, where a 400 is
+    /// the *normal* answer while the student is still typing their code.
+    pub async fn poll_device_token(&self, device_code: &str) -> Result<String, PollOutcome> {
+        let body = DeviceTokenRequest {
+            grant_type: DEVICE_GRANT_TYPE,
+            device_code,
+            client_id: DEVICE_CLIENT_ID,
+        };
+
+        let res = self
+            .http
+            .post(Self::url("/api/auth/device/token"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| PollOutcome::Other(err.into()))?;
+
+        let status = res.status();
+        if status.is_success() {
+            return res
+                .json::<DeviceTokenResponse>()
+                .await
+                .map(|token| token.access_token)
+                .map_err(|_| PollOutcome::Other(AppError::ServerError));
+        }
+
+        if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+            return Err(PollOutcome::Other(AppError::NetworkUnavailable));
+        }
+
+        match res.json::<DeviceTokenError>().await {
+            Ok(body) => Err(PollOutcome::from_oauth_code(&body.error)),
+            Err(_) => Err(PollOutcome::Other(AppError::ServerError)),
+        }
+    }
+
+    /// Who the freshly minted session token belongs to, for the identity chip.
+    /// The endpoint answers 200 with `null` for a token it does not recognise,
+    /// which is as signed-out as a 401.
+    pub async fn get_student_identity(&self, token: &str) -> AppResult<(String, String)> {
+        let res = self
+            .http
+            .get(Self::url("/api/auth/get-session"))
+            .bearer_auth(token)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            return Err(AppError::NotSignedIn);
+        }
+
+        match res
+            .json::<Option<GetSessionResponse>>()
+            .await
+            .map_err(|_| AppError::ServerError)?
+        {
+            Some(session) => Ok((session.user.name, session.user.email)),
+            None => Err(AppError::NotSignedIn),
+        }
+    }
+
+    /// Revoke the session server-side. Best-effort by contract: the caller
+    /// signs out locally whatever this returns, because a student walking away
+    /// from a shared machine must not stay signed in over a network blip.
+    pub async fn sign_out(&self, token: &str) -> AppResult<()> {
+        let res = self
+            .http
+            .post(Self::url("/api/auth/sign-out"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+
+        if res.status().is_success() {
+            Ok(())
+        } else {
+            Err(AppError::ServerError)
+        }
     }
 
     pub async fn save_answer(

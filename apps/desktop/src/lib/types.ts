@@ -93,6 +93,30 @@ export type StrikePayload = {
   warn: boolean
 }
 
+/**
+ * Sign-in state, from `AuthSnapshot` in `src-tauri/src/auth.rs`.
+ *
+ * Note what is absent, deliberately and forever: the Better Auth session token
+ * and the device flow's polling credential. `user_code` and `verification_uri`
+ * are the public half of the flow - the student is *meant* to read them out.
+ */
+export type AuthSnapshot = {
+  status: "signed_out" | "pending" | "signed_in"
+  /** The short code the student types into the web app. */
+  user_code?: string
+  /** Where they type it. Verified against the built-in web origin by Rust. */
+  verification_uri?: string
+  /** Seconds until the code above stops working. */
+  expires_in_s?: number
+  name?: string
+  email?: string
+  /**
+   * Why the last attempt ended signed-out: an `ErrorCode` such as
+   * "sign_in_expired" or "sign_in_denied". Only on the event that reports it.
+   */
+  error?: string
+}
+
 /** Stable discriminants from `AppError::code` on the Rust side. */
 export type ErrorCode =
   | "invalid_link"
@@ -104,6 +128,11 @@ export type ErrorCode =
   | "session_conflict"
   | "network_unavailable"
   | "no_session"
+  | "not_signed_in"
+  | "already_signed_in"
+  | "sign_in_expired"
+  | "sign_in_denied"
+  | "account_not_allowed"
   | "server_error"
 
 export type AppError = {

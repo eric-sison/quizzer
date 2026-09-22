@@ -18,7 +18,9 @@ use tauri::test::MockRuntime;
 
 use std::sync::atomic::Ordering;
 
+use crate::api::MOCK_STUDENT_TOKEN;
 use crate::commands::{self, AppState};
+use crate::session::now_epoch_secs;
 
 /// A token the fixture backend accepts. See `api/mock.rs`.
 const GOOD_LINK: &str = "http://localhost:3000/e/mockexamtoken000000001";
@@ -29,6 +31,10 @@ fn test_app() -> (App<MockRuntime>, WebviewWindow<MockRuntime>) {
         .invoke_handler(tauri::generate_handler![
             commands::validate_link,
             commands::preview_link,
+            commands::begin_sign_in,
+            commands::cancel_sign_in,
+            commands::get_auth_state,
+            commands::sign_out,
             commands::start_session,
             commands::save_answer,
             commands::submit_exam,
@@ -46,6 +52,25 @@ fn test_app() -> (App<MockRuntime>, WebviewWindow<MockRuntime>) {
         .expect("failed to build mock window");
 
     (app, window)
+}
+
+/// Put a signed-in student into the auth store directly, with the token the
+/// fixture backend honours. Claiming a session now requires this; the tests
+/// that exercise the device flow itself go through `begin_sign_in` instead.
+fn sign_in(app: &App<MockRuntime>) {
+    let state = app.state::<AppState>();
+    let generation = state.auth.begin_pending(
+        "test-device-code".to_string(),
+        "TEST-CODE".to_string(),
+        format!("{}/device", crate::auth::WEB_ORIGIN),
+        now_epoch_secs() + 300,
+    );
+    assert!(state.auth.set_signed_in_if_current(
+        generation,
+        MOCK_STUDENT_TOKEN.to_string(),
+        "Alex Student".to_string(),
+        "alex.student@school.edu".to_string(),
+    ));
 }
 
 fn call(window: &WebviewWindow<MockRuntime>, cmd: &str, args: Value) -> Result<Value, Value> {
@@ -170,6 +195,7 @@ fn a_link_that_has_not_opened_yet_is_described_rather_than_refused() {
 #[test]
 fn describing_an_early_link_does_not_let_one_be_started() {
     let (app, window) = test_app();
+    sign_in(&app);
 
     // The gate that matters is the claim, and it did not move. Preview and
     // claim share a resolver here exactly as they do on the real backend, so
@@ -187,7 +213,8 @@ fn describing_an_early_link_does_not_let_one_be_started() {
 
 #[test]
 fn a_full_exam_runs_from_link_to_receipt() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
 
     let started = call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let questions = started["snapshot"]["manifest"]["questions"]
@@ -216,7 +243,8 @@ fn a_full_exam_runs_from_link_to_receipt() {
 
 #[test]
 fn the_manifest_never_carries_an_answer_key() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
 
     let started = call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let serialised = started.to_string();
@@ -233,7 +261,8 @@ fn the_manifest_never_carries_an_answer_key() {
 
 #[test]
 fn question_images_reach_the_webview_as_data_uris_never_urls() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
     let started = call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     // The image is a node inside the prompt document, holding only a media id.
@@ -256,22 +285,33 @@ fn question_images_reach_the_webview_as_data_uris_never_urls() {
 
 #[test]
 fn the_session_credential_never_crosses_the_ipc_boundary() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
 
     let started = call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let state = call(&window, "get_session_state", json!({})).expect("should read state");
+    let auth = call(&window, "get_auth_state", json!({})).expect("should read auth state");
 
-    for payload in [&started, &state] {
+    for payload in [&started, &state, &auth] {
         let text = payload.to_string();
         assert!(!text.contains("mock-session-jwt"), "session JWT leaked: {text}");
         assert!(!text.contains("session_jwt"), "session JWT field leaked: {text}");
         assert!(!text.contains("idempotency"), "idempotency key leaked: {text}");
+        // The student's Better Auth session token and the device flow's
+        // polling credential live under the same rule as the exam JWT.
+        assert!(
+            !text.contains(MOCK_STUDENT_TOKEN),
+            "student session token leaked: {text}"
+        );
+        assert!(!text.contains("device-code"), "device code leaked: {text}");
+        assert!(!text.contains("device_code"), "device code field leaked: {text}");
     }
 }
 
 #[test]
 fn submitting_twice_replays_the_same_receipt_instead_of_creating_a_second_attempt() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     let first = call(&window, "submit_exam", json!({})).expect("first submit");
@@ -282,7 +322,8 @@ fn submitting_twice_replays_the_same_receipt_instead_of_creating_a_second_attemp
 
 #[test]
 fn answers_to_unknown_questions_are_refused() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     let err = call(
@@ -311,7 +352,8 @@ fn answering_before_a_session_exists_is_refused() {
 
 #[test]
 fn a_second_session_cannot_be_started_over_a_live_one() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     let err = call(&window, "start_session", json!({ "raw": GOOD_LINK }))
@@ -330,7 +372,8 @@ fn each_bad_token_maps_to_its_own_screen() {
         ("mockexamtoken000000006", "network_unavailable"),
         ("mockexamtokenunknown00", "invalid_link"),
     ] {
-        let (_app, window) = test_app();
+        let (app, window) = test_app();
+        sign_in(&app);
         let err = call(
             &window,
             "start_session",
@@ -345,6 +388,7 @@ fn each_bad_token_maps_to_its_own_screen() {
 #[test]
 fn a_mid_exam_revocation_ends_the_session_so_the_student_is_not_typing_into_a_dead_exam() {
     let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     // What the heartbeat loop does when the server says the link is revoked.
@@ -372,7 +416,8 @@ fn a_mid_exam_revocation_ends_the_session_so_the_student_is_not_typing_into_a_de
 
 #[test]
 fn quitting_is_refused_while_an_exam_is_live_but_allowed_before_one() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
 
     // Before an exam: the student must be able to leave. We can't assert the
     // process exits under test, only that the command doesn't reject.
@@ -385,7 +430,8 @@ fn quitting_is_refused_while_an_exam_is_live_but_allowed_before_one() {
 
 #[test]
 fn the_frontend_cannot_write_arbitrary_kinds_into_the_audit_log() {
-    let (_app, window) = test_app();
+    let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
 
     // Accepted from the frontend.
@@ -416,6 +462,7 @@ fn the_frontend_cannot_write_arbitrary_kinds_into_the_audit_log() {
 #[test]
 fn a_proctor_release_survives_leaving_the_window_and_coming_back() {
     let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let state = app.state::<AppState>();
 
@@ -457,6 +504,7 @@ fn a_proctor_release_survives_leaving_the_window_and_coming_back() {
 #[test]
 fn a_release_is_recorded_and_never_silent() {
     let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let state = app.state::<AppState>();
 
@@ -491,6 +539,7 @@ fn the_override_does_nothing_outside_a_sitting() {
 #[test]
 fn a_sanctioned_absence_does_not_cost_the_student_a_strike() {
     let (app, window) = test_app();
+    sign_in(&app);
     call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
     let state = app.state::<AppState>();
 
@@ -506,4 +555,134 @@ fn a_sanctioned_absence_does_not_cost_the_student_a_strike() {
         struck,
         "leaving the window during a release must not be struck"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Student sign-in
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_exam_cannot_be_claimed_without_a_signed_in_student() {
+    let (app, window) = test_app();
+
+    let err = call(&window, "start_session", json!({ "raw": GOOD_LINK }))
+        .expect_err("the claim now requires an identity");
+
+    assert_eq!(error_code(&err), "not_signed_in");
+    assert!(!app.state::<AppState>().session.is_active());
+}
+
+#[test]
+fn beginning_a_sign_in_shows_the_code_but_never_the_device_credential() {
+    let (_app, window) = test_app();
+
+    let pending = call(&window, "begin_sign_in", json!({})).expect("should begin");
+
+    assert_eq!(pending["status"], "pending");
+    assert!(pending["user_code"].as_str().is_some());
+    let uri = pending["verification_uri"].as_str().expect("where to type it");
+    assert!(uri.starts_with(crate::auth::WEB_ORIGIN));
+    assert!(pending["expires_in_s"].as_u64().unwrap_or(0) > 0);
+
+    let text = pending.to_string();
+    assert!(!text.contains("device-code"), "device code leaked: {text}");
+    assert!(!text.contains("device_code"), "device code field leaked: {text}");
+    assert!(
+        !text.contains(MOCK_STUDENT_TOKEN),
+        "a token leaked before one even exists: {text}"
+    );
+}
+
+#[test]
+fn a_cancelled_sign_in_goes_back_to_signed_out() {
+    let (_app, window) = test_app();
+
+    call(&window, "begin_sign_in", json!({})).expect("should begin");
+    let after = call(&window, "cancel_sign_in", json!({})).expect("should cancel");
+
+    assert_eq!(after["status"], "signed_out");
+    let state = call(&window, "get_auth_state", json!({})).expect("should read");
+    assert_eq!(state["status"], "signed_out");
+}
+
+/// The full flow against the fixture: begin, wait for the poll task to be told
+/// "approved", and end up signed in with a name on screen and no token in any
+/// payload. This is the one test that exercises the spawned task's lifecycle
+/// end to end, which is why it tolerates real seconds passing.
+#[test]
+fn the_device_flow_ends_signed_in_and_the_token_stays_in_rust() {
+    let (app, window) = test_app();
+
+    let pending = call(&window, "begin_sign_in", json!({})).expect("should begin");
+    assert_eq!(pending["status"], "pending");
+
+    // Fixture timing: two pending polls at ~1s each plus latency. Give it a
+    // generous ceiling so a slow CI machine does not flake.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let signed_in = loop {
+        let snapshot = call(&window, "get_auth_state", json!({})).expect("should read");
+        if snapshot["status"] == "signed_in" {
+            break snapshot;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "sign-in never resolved; last snapshot: {snapshot}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+
+    assert_eq!(signed_in["name"], "Alex Student");
+    assert_eq!(signed_in["email"], "alex.student@school.edu");
+    let text = signed_in.to_string();
+    assert!(
+        !text.contains(MOCK_STUDENT_TOKEN),
+        "the session token crossed the IPC boundary: {text}"
+    );
+
+    // And the token it holds is real enough to claim an exam with.
+    call(&window, "start_session", json!({ "raw": GOOD_LINK }))
+        .expect("a signed-in student can start");
+    assert!(app.state::<AppState>().session.is_active());
+}
+
+#[test]
+fn beginning_a_sign_in_twice_or_mid_exam_is_refused() {
+    let (app, window) = test_app();
+    sign_in(&app);
+
+    // Already signed in: nothing to begin.
+    let err = call(&window, "begin_sign_in", json!({})).expect_err("already signed in");
+    assert_eq!(error_code(&err), "already_signed_in");
+
+    // Mid-exam: the identity is settled on the claim the server holds.
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+    let state = app.state::<AppState>();
+    state.auth.take_signed_out();
+    let err = call(&window, "begin_sign_in", json!({})).expect_err("no sign-in mid-exam");
+    assert_eq!(error_code(&err), "session_conflict");
+}
+
+#[test]
+fn signing_out_is_refused_while_an_exam_is_live() {
+    let (app, window) = test_app();
+    sign_in(&app);
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+
+    let err = call(&window, "sign_out", json!({})).expect_err("the sitting is bound to them");
+    assert_eq!(error_code(&err), "session_conflict");
+    assert!(app.state::<AppState>().auth.is_signed_in());
+}
+
+#[test]
+fn signing_out_clears_the_identity_and_the_next_claim_is_refused() {
+    let (app, window) = test_app();
+    sign_in(&app);
+
+    let after = call(&window, "sign_out", json!({})).expect("should sign out");
+    assert_eq!(after["status"], "signed_out");
+    assert!(!app.state::<AppState>().auth.is_signed_in());
+
+    let err = call(&window, "start_session", json!({ "raw": GOOD_LINK }))
+        .expect_err("no identity, no exam");
+    assert_eq!(error_code(&err), "not_signed_in");
 }

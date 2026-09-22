@@ -5,12 +5,15 @@ import {
   Info,
   Loader2,
   Lock,
+  LogOut,
   ShieldCheck,
+  User,
 } from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
 import { previewLink, quitApp, validateLink } from "@/lib/ipc"
+import { useStudentAuth, type StudentAuth } from "@/hooks/use-student-auth"
 import {
   toAppError,
   type AppError,
@@ -26,6 +29,7 @@ type LinkEntryProps = {
 }
 
 export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
+  const auth = useStudentAuth()
   const [value, setValue] = React.useState("")
   const [info, setInfo] = React.useState<LinkInfo | null>(null)
   const [preview, setPreview] = React.useState<LinkPreview | null>(null)
@@ -108,7 +112,11 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
     }
   }, [dueToOpen, value])
 
-  const canBegin = Boolean(info) && !busy && !shut
+  // Signing in is the claim's precondition, so Begin waits for it too: an
+  // enabled button that Rust would refuse with `not_signed_in` teaches the
+  // student the screen cannot be trusted.
+  const signedIn = auth.snapshot?.status === "signed_in"
+  const canBegin = Boolean(info) && !busy && !shut && signedIn
   const message = error?.message ?? localError
 
   return (
@@ -123,6 +131,8 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
             Paste the link your teacher gave you.
           </p>
         </div>
+
+        <IdentityPanel auth={auth} disabled={busy} />
 
         <form
           className="flex flex-col gap-3 rounded-xl border bg-card p-5"
@@ -250,6 +260,194 @@ function useOpensIn(preview: LinkPreview | null): number | null {
   // Gated on the link rather than cleared, so a stale count from a previous
   // link can never be read as this one's.
   return opensAt === undefined ? null : seconds
+}
+
+/**
+ * Friendly words for the code the failure event carries. The codes come from
+ * `AppError::code` in Rust; anything unrecognised gets the generic line, the
+ * same collapse Rust applies to server codes it does not know.
+ */
+const SIGN_IN_ENDED_COPY: Record<string, string> = {
+  sign_in_expired:
+    "That sign-in code expired before it was used. Start again for a fresh one.",
+  sign_in_denied:
+    "That sign-in was declined. Try again, or ask your teacher for help.",
+}
+
+function signInEndedCopy(code: string): string {
+  return (
+    SIGN_IN_ENDED_COPY[code] ?? "Something went wrong during sign-in. Try again."
+  )
+}
+
+/** The code's remaining life, in clock form: a code is short-lived enough that
+ * "4:57" reads better than "4 min". */
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, "0")}`
+}
+
+/**
+ * Who is taking this exam.
+ *
+ * Three states, one place on the screen. Signed out explains why signing in
+ * comes first; pending shows the code to type - LARGE, because it is being
+ * read off this screen and typed into another device - and where to type it;
+ * signed in is a quiet chip with the one action it needs.
+ *
+ * The verification address is deliberately *not* a link: navigation is blocked
+ * by design in this webview, so a link would be a button that does nothing.
+ * It is a read-only field instead, which also survives `guard.js` - selection
+ * outside editable fields is swallowed, and a student may want to copy the
+ * address rather than retype it.
+ */
+function IdentityPanel({
+  auth,
+  disabled,
+}: {
+  auth: StudentAuth
+  /** A session claim is in flight; leave the identity alone under it. */
+  disabled: boolean
+}) {
+  const { snapshot, countdown, error, busy, beginSignIn, cancelSignIn, signOut } =
+    auth
+
+  // Before the first read of Rust's state lands there is nothing truthful to
+  // show; the gap is a few milliseconds and a flash of the wrong state is
+  // worse than a blank one.
+  if (!snapshot) return null
+
+  if (snapshot.status === "pending") {
+    return (
+      <section
+        aria-label="Sign in"
+        className="flex flex-col gap-4 rounded-xl border bg-card p-5"
+      >
+        <p className="text-sm text-muted-foreground">
+          On another device, or on this one after the exam window is closed,
+          go to the address below and enter this code:
+        </p>
+
+        <p
+          aria-label="Your sign-in code"
+          className="text-center font-mono text-4xl font-semibold tracking-[0.25em] select-text"
+        >
+          {snapshot.user_code}
+        </p>
+
+        {snapshot.verification_uri ? (
+          <input
+            readOnly
+            aria-label="Where to enter the code"
+            value={snapshot.verification_uri}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-md border bg-muted/40 px-3 py-2 text-center font-mono text-sm outline-none"
+          />
+        ) : null}
+
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            Waiting for you to sign in
+            {countdown !== null ? (
+              <>
+                {" · code expires in "}
+                <span className="font-mono tabular-nums">
+                  {formatCountdown(countdown)}
+                </span>
+              </>
+            ) : null}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={cancelSignIn}
+          >
+            Cancel
+          </Button>
+        </div>
+      </section>
+    )
+  }
+
+  if (snapshot.status === "signed_in") {
+    return (
+      <section
+        aria-label="Signed in"
+        className="flex items-center gap-3 rounded-xl border bg-card p-4"
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10">
+          <User className="size-4.5 text-primary" aria-hidden />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <p className="truncate text-sm font-medium">{snapshot.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {snapshot.email}
+          </p>
+        </div>
+        {/* Gone entirely once an exam is being claimed: identity changes stop
+            mattering at the moment they stop being possible. */}
+        {disabled ? null : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={signOut}
+          >
+            <LogOut aria-hidden />
+            Sign out
+          </Button>
+        )}
+      </section>
+    )
+  }
+
+  // Signed out. `snapshot.error` is how a pending attempt reports its ending;
+  // `error` is a command this screen issued being refused. Show whichever is
+  // fresher - a refusal always follows a click, so it wins.
+  const endedNotice = error?.message ?? (snapshot.error ? signInEndedCopy(snapshot.error) : null)
+
+  return (
+    <section
+      aria-label="Sign in"
+      className="flex flex-col gap-3 rounded-xl border bg-card p-5"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10">
+          <User className="size-4.5 text-primary" aria-hidden />
+        </span>
+        <div className="flex flex-col gap-0.5">
+          <p className="text-sm font-medium">First, say who you are</p>
+          <p className="text-xs text-muted-foreground">
+            Your exam is recorded under your school account, so sign in before
+            you begin. You&apos;ll get a short code to enter on another device.
+          </p>
+        </div>
+      </div>
+
+      {endedNotice ? <Notice tone="bad">{endedNotice}</Notice> : null}
+
+      <Button
+        type="button"
+        variant="outline"
+        disabled={busy || disabled}
+        onClick={beginSignIn}
+      >
+        {busy ? (
+          <>
+            <Loader2 className="animate-spin" aria-hidden />
+            Getting your code…
+          </>
+        ) : (
+          "Sign in with your school Google account"
+        )}
+      </Button>
+    </section>
+  )
 }
 
 /**

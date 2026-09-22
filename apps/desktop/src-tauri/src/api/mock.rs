@@ -11,7 +11,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use super::{
-    HeartbeatResponse, PreviewResponse, ProctorEvent, StartSessionResponse, SubmitResponse,
+    DeviceCodeResponse, HeartbeatResponse, PollOutcome, PreviewResponse, ProctorEvent,
+    StartSessionResponse, SubmitResponse,
 };
 use crate::error::{AppError, AppResult};
 use crate::session::{
@@ -34,6 +35,24 @@ const TOKEN_SOON: &str = "mockexamtoken000000008";
 
 const MOCK_JWT: &str = "mock-session-jwt";
 const DEFAULT_DURATION_S: u64 = 45 * 60;
+
+/// The device flow's fixtures. The flow "approves itself" after a couple of
+/// pending polls - there is no web app in a mock run to approve it for real -
+/// which is enough to watch the pending panel, the countdown and the arrival
+/// of the identity chip under `tauri:dev:mock`.
+const MOCK_DEVICE_CODE: &str = "mock-device-code-0000000001";
+const MOCK_USER_CODE: &str = "BQJD-KTTP";
+/// The Better Auth session token the fixture mints. Exported for the command
+/// tests, which sign their fixture student in with it directly.
+pub const MOCK_STUDENT_TOKEN: &str = "mock-student-session-token";
+pub const MOCK_STUDENT_NAME: &str = "Alex Student";
+pub const MOCK_STUDENT_EMAIL: &str = "alex.student@school.edu";
+/// Polls answered `authorization_pending` before the fixture approves.
+const POLLS_BEFORE_APPROVAL: u32 = 2;
+/// Fast enough that mock-mode sign-in takes seconds, slow enough that the
+/// pending panel is actually seen.
+const MOCK_POLL_INTERVAL_S: u64 = 1;
+const MOCK_DEVICE_EXPIRES_IN_S: u64 = 300;
 
 /// The one image the fixture exam references, on its first question.
 pub const MOCK_IMAGE_ID: &str = "00000000-0000-4000-8000-00000000img1";
@@ -59,6 +78,12 @@ struct MockState {
     answers: HashMap<String, serde_json::Value>,
     events: Vec<ProctorEvent>,
     expires_at: u64,
+    /// Polls of the token endpoint since the last device-code request.
+    device_polls: u32,
+    /// A device code has been issued and not yet consumed or replaced.
+    device_code_live: bool,
+    /// The fixture student's session token is currently valid.
+    signed_in: bool,
 }
 
 pub struct ApiClient {
@@ -126,8 +151,84 @@ impl ApiClient {
         })
     }
 
-    pub async fn start_session(&self, token: String) -> AppResult<StartSessionResponse> {
+    // --- student sign-in (device flow) ---------------------------------------
+
+    /// Start a device-flow attempt. A fresh request replaces any earlier one,
+    /// as the real authorisation server's would.
+    pub async fn request_device_code(&self) -> AppResult<DeviceCodeResponse> {
         Self::latency().await;
+        {
+            let mut state = self.state.lock().expect("mock state poisoned");
+            state.device_polls = 0;
+            state.device_code_live = true;
+        }
+        Ok(DeviceCodeResponse {
+            device_code: MOCK_DEVICE_CODE.to_string(),
+            user_code: MOCK_USER_CODE.to_string(),
+            // Built from the same constant the client verifies against, so the
+            // fixture keeps working when QUIZZER_WEB_ORIGIN is overridden.
+            verification_uri: format!("{}/device", crate::auth::WEB_ORIGIN),
+            expires_in: MOCK_DEVICE_EXPIRES_IN_S,
+            interval: MOCK_POLL_INTERVAL_S,
+        })
+    }
+
+    /// Pending for the first `POLLS_BEFORE_APPROVAL` polls, then approved.
+    pub async fn poll_device_token(&self, device_code: &str) -> Result<String, PollOutcome> {
+        Self::latency().await;
+        let mut state = self.state.lock().expect("mock state poisoned");
+
+        if device_code != MOCK_DEVICE_CODE || !state.device_code_live {
+            // What the real server says about a code it does not recognise:
+            // `invalid_grant`, which maps to Expired.
+            return Err(PollOutcome::Expired);
+        }
+
+        state.device_polls += 1;
+        if state.device_polls <= POLLS_BEFORE_APPROVAL {
+            return Err(PollOutcome::Pending);
+        }
+
+        // Approved: the device code is consumed, exactly once.
+        state.device_code_live = false;
+        state.signed_in = true;
+        Ok(MOCK_STUDENT_TOKEN.to_string())
+    }
+
+    /// Answers for the token the fixture minted, while it is still good - a
+    /// signed-out token stops identifying anyone, as on the real backend,
+    /// where `get-session` returns `null` for a revoked session.
+    pub async fn get_student_identity(&self, token: &str) -> AppResult<(String, String)> {
+        Self::latency().await;
+        let signed_in = self.state.lock().expect("mock state poisoned").signed_in;
+        if signed_in && token == MOCK_STUDENT_TOKEN {
+            Ok((
+                MOCK_STUDENT_NAME.to_string(),
+                MOCK_STUDENT_EMAIL.to_string(),
+            ))
+        } else {
+            Err(AppError::NotSignedIn)
+        }
+    }
+
+    pub async fn sign_out(&self, _token: &str) -> AppResult<()> {
+        Self::latency().await;
+        self.state.lock().expect("mock state poisoned").signed_in = false;
+        Ok(())
+    }
+
+    pub async fn start_session(
+        &self,
+        token: String,
+        student_token: &str,
+    ) -> AppResult<StartSessionResponse> {
+        Self::latency().await;
+
+        // The rule the real backend now owns: no claim without a student. The
+        // fixture enforcing it too is what keeps the client honest about it.
+        if student_token != MOCK_STUDENT_TOKEN {
+            return Err(AppError::NotSignedIn);
+        }
 
         let duration_s = Self::resolve(&token, false)?.duration_s;
 
