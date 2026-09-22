@@ -1,7 +1,8 @@
 import * as React from "react"
-import { Loader2, ShieldCheck } from "lucide-react"
+import { AlertCircle, Info, Loader2, Lock, ShieldCheck } from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
+import { Input } from "@workspace/ui/components/input"
 import { previewLink, quitApp, validateLink } from "@/lib/ipc"
 import {
   toAppError,
@@ -71,18 +72,19 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
 
   return (
     <main className="flex min-h-svh items-center justify-center p-8">
-      <div className="w-full max-w-lg">
-        <div className="mb-8 flex flex-col gap-2">
+      <div className="flex w-full max-w-lg flex-col gap-6">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+            <ShieldCheck className="size-6 text-primary" aria-hidden />
+          </span>
           <h1 className="font-heading text-2xl font-medium">Start your exam</h1>
-          <p className="text-sm text-muted-foreground">
-            Paste the quiz link your teacher gave you. The exam opens in a
-            locked window and you won&apos;t be able to switch to other apps
-            until you submit.
+          <p className="max-w-sm text-sm text-muted-foreground">
+            Paste the link your teacher gave you.
           </p>
         </div>
 
         <form
-          className="flex flex-col gap-3"
+          className="flex flex-col gap-3 rounded-xl border bg-card p-5"
           onSubmit={(e) => {
             e.preventDefault()
             if (canBegin) onBegin(value.trim())
@@ -91,7 +93,7 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
           <label htmlFor="quiz-link" className="text-sm font-medium">
             Quiz link
           </label>
-          <input
+          <Input
             id="quiz-link"
             value={value}
             onChange={(e) => setValue(e.currentTarget.value)}
@@ -102,32 +104,32 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
             disabled={busy}
             aria-invalid={Boolean(message) || undefined}
             aria-describedby={message ? "quiz-link-error" : undefined}
-            className="h-11 w-full min-w-0 rounded-lg border border-input bg-background px-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 aria-invalid:border-destructive"
+            className="h-11 font-mono"
           />
 
           {message ? (
-            <p id="quiz-link-error" role="alert" className="text-sm text-destructive">
+            <Notice id="quiz-link-error" tone="bad">
               {message}
-            </p>
+            </Notice>
           ) : previewError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {previewError}
-            </p>
+            // A verdict about the link itself - closed, revoked, not open yet.
+            // Worth reading before pressing Begin, and the reason the preview
+            // runs at all.
+            <Notice tone="bad">{previewError}</Notice>
           ) : preview ? (
             <ExamConfigCard preview={preview} />
           ) : info ? (
-            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              <ShieldCheck className="size-4" aria-hidden />
+            <Notice tone="ok">
               Ready to connect to <span className="font-mono">{info.host}</span>{" "}
               (exam {info.token_preview})
-            </p>
+            </Notice>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              The link will be checked before anything is sent.
-            </p>
+            <Notice tone="quiet">
+              The link is checked before anything is sent.
+            </Notice>
           )}
 
-          <Button type="submit" size="lg" disabled={!canBegin} className="mt-2 w-full">
+          <Button type="submit" size="lg" disabled={!canBegin} className="mt-1 w-full">
             {busy ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden />
@@ -137,9 +139,18 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
               "Begin exam"
             )}
           </Button>
+
+          {/* Beside the button that causes it, not in the page's opening
+              paragraph: this is what pressing Begin does, and it is the last
+              thing worth reading before doing it. */}
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            The exam opens in a locked window. You will not be able to switch to
+            other apps until you submit.
+          </p>
         </form>
 
-        <div className="mt-6 flex justify-center">
+        <div className="flex justify-center">
           <Button
             variant="ghost"
             size="sm"
@@ -151,6 +162,40 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
         </div>
       </div>
     </main>
+  )
+}
+
+/**
+ * One line under the field, in the three flavours it comes in.
+ *
+ * They all occupy the same place and are told apart by an icon as well as a
+ * colour, because this screen is read in a hurry by someone who has just been
+ * handed a link, and "is that red or grey" is not a question worth asking.
+ */
+function Notice({
+  id,
+  tone,
+  children,
+}: {
+  id?: string
+  tone: "bad" | "ok" | "quiet"
+  children: React.ReactNode
+}) {
+  const Icon = tone === "bad" ? AlertCircle : tone === "ok" ? ShieldCheck : Info
+
+  return (
+    <p
+      id={id}
+      role={tone === "bad" ? "alert" : undefined}
+      className={
+        tone === "bad"
+          ? "flex items-start gap-2 text-sm text-destructive"
+          : "flex items-start gap-2 text-sm text-muted-foreground"
+      }
+    >
+      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <span>{children}</span>
+    </p>
   )
 }
 
@@ -177,25 +222,29 @@ function ExamConfigCard({ preview }: { preview: LinkPreview }) {
   ]
 
   return (
-    <div className="rounded-lg border bg-muted/30 p-4">
-      <p className="text-sm font-medium">{exam.title}</p>
-      {exam.description ? (
-        <p className="mt-1 text-xs whitespace-pre-line text-muted-foreground">
-          {exam.description}
-        </p>
-      ) : null}
+    <div className="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4">
+      <div className="flex flex-col gap-1">
+        <p className="font-medium">{exam.title}</p>
+        {exam.description ? (
+          <p className="text-xs whitespace-pre-line text-muted-foreground">
+            {exam.description}
+          </p>
+        ) : null}
+      </div>
 
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         {rows.map(([label, valueText]) => (
-          <React.Fragment key={label}>
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd>{valueText}</dd>
-          </React.Fragment>
+          <div key={label} className="flex flex-col">
+            <dt className="text-[11px] tracking-wide text-muted-foreground uppercase">
+              {label}
+            </dt>
+            <dd className="text-sm">{valueText}</dd>
+          </div>
         ))}
       </dl>
 
-      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <ShieldCheck className="size-3.5" aria-hidden />
+      <p className="flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
+        <ShieldCheck className="size-3.5 shrink-0" aria-hidden />
         Ready to connect to <span className="font-mono">{preview.host}</span>{" "}
         (exam {preview.token_preview})
       </p>
