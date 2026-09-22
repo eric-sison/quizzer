@@ -272,17 +272,37 @@ function FillInBlankAnswer({
 
   return (
     <div className="flex max-w-md flex-col gap-2.5">
-      {Array.from({ length: count }, (_, index) => (
-        <Label key={index} className="flex-col items-start gap-1.5">
-          <span className="text-xs text-muted-foreground">Blank {index + 1}</span>
-          <Input
-            value={current[index] ?? ""}
-            readOnly={readOnly}
-            onChange={(event) => setBlank(index, event.currentTarget.value)}
-            placeholder="Your answer"
-          />
-        </Label>
-      ))}
+      {Array.from({ length: count }, (_, index) => {
+        /**
+         * A single blank needs no heading: the prompt already says what goes
+         * in it, and a label over a lone box is furniture. Several do, because
+         * a student has to see which box is which - `in_order` grading marks
+         * response i against blank i, so putting the right word in the wrong
+         * row costs marks.
+         *
+         * "Answer", not "Blank": the student is filling in answers. The
+         * teacher's editor says "Blank" because that is the thing being
+         * authored there.
+         */
+        const label = count > 1 ? `Answer ${index + 1}` : null
+
+        return (
+          <Label key={index} className="flex-col items-start gap-1.5">
+            {label ? (
+              <span className="text-xs text-muted-foreground">{label}</span>
+            ) : null}
+            <Input
+              value={current[index] ?? ""}
+              readOnly={readOnly}
+              onChange={(event) => setBlank(index, event.currentTarget.value)}
+              placeholder="Your answer"
+              // With no visible text in the label, the field would otherwise
+              // reach a screen reader unnamed.
+              aria-label={label === null ? "Your answer" : undefined}
+            />
+          </Label>
+        )
+      })}
     </div>
   )
 }

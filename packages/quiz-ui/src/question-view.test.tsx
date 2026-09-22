@@ -560,13 +560,30 @@ describe("fill-in-the-blank answers", () => {
     const seen: unknown[] = []
     await show(projected(fillInBlank()), { onChange: (v) => seen.push(v) })
 
-    expect(container.textContent).toContain("Blank 1")
-    expect(container.textContent).toContain("Blank 2")
+    expect(container.textContent).toContain("Answer 1")
+    expect(container.textContent).toContain("Answer 2")
     const fields = [...container.querySelectorAll<HTMLInputElement>("input")]
     expect(fields).toHaveLength(2)
 
     await act(async () => typeInto(fields[1]!, "oxygen"))
     expect(seen.at(-1)).toEqual(["", "oxygen"])
+  })
+
+  it("leaves a lone blank unlabelled, but still names it for a screen reader", async () => {
+    const one = fillInBlank()
+    if (one.kind !== "fill_in_blank") throw new Error("bad fixture")
+    one.blanks = [one.blanks[0]!]
+    one.promptDoc = richDocFromText("Water is ___.")
+
+    await show(projected(one), {})
+
+    // Nothing numbered: with one box the prompt has already said what goes in
+    // it, and "Blank 1" above it is furniture.
+    expect(container.textContent).not.toContain("Answer 1")
+    expect(container.textContent).not.toContain("Blank")
+
+    const field = container.querySelector<HTMLInputElement>("input")!
+    expect(field.getAttribute("aria-label")).toBe("Your answer")
   })
 
   it("tolerates a stale non-array answer", async () => {
