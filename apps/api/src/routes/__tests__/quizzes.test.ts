@@ -109,6 +109,7 @@ describe("GET /api/quizzes", () => {
         points: 1,
         required: true,
         correct: true,
+        labelStyle: "true_false",
       },
     ]
     await app.request(`/api/quizzes/${quiz.id}/draft`, {

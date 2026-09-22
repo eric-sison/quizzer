@@ -177,6 +177,30 @@ describe("per-kind answer configuration", () => {
     expect(text()).not.toContain("Add option")
   })
 
+  it("true/false can be reworded as yes/no without moving the answer", async () => {
+    const changes: Question[] = []
+    await mount({ ...createQuestion("true_false"), correct: false }, (q) =>
+      changes.push(q)
+    )
+
+    const yesNo = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (tab) => tab.textContent === "Yes / No"
+    )!
+    await act(async () => yesNo.click())
+
+    const next = changes.at(-1)
+    if (next?.kind !== "true_false") throw new Error("wrong kind")
+    expect(next.labelStyle).toBe("yes_no")
+    // Wording only: the boolean the key is written against is untouched.
+    expect(next.correct).toBe(false)
+
+    await mount(next)
+    const pair = [...container.querySelectorAll('[role="radio"]')].map(
+      (radio) => radio.closest("label")?.textContent
+    )
+    expect(pair).toEqual(["Yes", "No"])
+  })
+
   it("single choice offers options and the one/many switch", async () => {
     await mount(createQuestion("single_choice"))
 

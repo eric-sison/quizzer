@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import { answerAsRichDoc } from "../manifest"
 import { AnswerLeakError, assertNoAnswerLeak, extractKey, project } from "../project"
-import { emptyRichDoc, richDocSchema } from "../rich-text"
+import { createQuestion, createQuizDoc, quizDocSchema } from "../question"
+import { emptyRichDoc, richDocFromText, richDocSchema } from "../rich-text"
 import { FALSE_ID, TRUE_ID } from "../types/true-false"
 import {
   fillInBlank,
@@ -50,6 +51,23 @@ describe("project", () => {
       { id: TRUE_ID, label: "True" },
       { id: FALSE_ID, label: "False" },
     ])
+  })
+
+  it("relabels a yes/no question without moving its choice ids", () => {
+    const doc = sampleQuiz()
+    const tf = doc.questions[0]
+    if (tf?.kind !== "true_false") throw new Error("bad fixture")
+    tf.labelStyle = "yes_no"
+
+    const manifest = project("quiz-1", doc)
+
+    // Ids are what the answer key and the submitted response speak in, so the
+    // wording may change after publication without regrading anything.
+    expect(manifest.questions[0]?.choices).toEqual([
+      { id: TRUE_ID, label: "Yes" },
+      { id: FALSE_ID, label: "No" },
+    ])
+    expect(extractKey(doc).keys[tf.id]).toEqual({ kind: "true_false", correct: tf.correct })
   })
 
   it("projects essay word limits to the wire format", () => {
@@ -355,8 +373,22 @@ describe("the new kinds project without their answers", () => {
   })
 })
 
+describe("yes/no on documents authored before it existed", () => {
+  it("parses as true/false, which is how they were worded", () => {
+    const legacy: Record<string, unknown> = { ...createQuestion("true_false") }
+    delete legacy.labelStyle
+
+    const parsed = quizDocSchema.parse({ ...createQuizDoc("Quiz"), questions: [legacy] })
+    const question = parsed.questions[0]!
+    if (question.kind !== "true_false") throw new Error("wrong kind")
+
+    expect(question.labelStyle).toBe("true_false")
+  })
+})
+
 describe("answerAsRichDoc with a matching record", () => {
   it("degrades a stale matching answer to an empty document", () => {
     expect(answerAsRichDoc({ "left-1": "right-2" })).toEqual(emptyRichDoc())
   })
 })
+

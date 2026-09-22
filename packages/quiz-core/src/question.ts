@@ -61,10 +61,24 @@ export const choiceOptionSchema = z.strictObject({
   points: z.number().int().min(0).max(MAX_QUESTION_POINTS).optional(),
 })
 
+/**
+ * Which word pair a true/false question presents. The stored answer is a
+ * boolean either way: this chooses the wording shown to the student, not what
+ * counts as right, so a question can be reworded after publication without
+ * touching its answer key.
+ */
+export const trueFalseStyleSchema = z.enum(["true_false", "yes_no"])
+
 export const trueFalseQuestionSchema = z.strictObject({
   ...baseQuestionFields,
   kind: z.literal("true_false"),
   correct: z.boolean(),
+  /**
+   * Defaulted, not required: every quiz authored before yes/no existed was
+   * written as true/false, and a required key would make each one fail to
+   * parse.
+   */
+  labelStyle: trueFalseStyleSchema.default("true_false"),
 })
 
 export const singleChoiceQuestionSchema = z.strictObject({
@@ -232,6 +246,7 @@ export const quizDocSchema = z.strictObject({
 })
 
 export type ChoiceOption = z.infer<typeof choiceOptionSchema>
+export type TrueFalseStyle = z.infer<typeof trueFalseStyleSchema>
 export type ScoringMode = z.infer<typeof scoringModeSchema>
 export type TrueFalseQuestion = z.infer<typeof trueFalseQuestionSchema>
 export type SingleChoiceQuestion = z.infer<typeof singleChoiceQuestionSchema>
@@ -280,7 +295,12 @@ export function createQuestion<K extends QuestionKind>(kind: K): QuestionOfKind<
 
   switch (kind) {
     case "true_false":
-      return { ...base, kind: "true_false", correct: true } as QuestionOfKind<K>
+      return {
+        ...base,
+        kind: "true_false",
+        correct: true,
+        labelStyle: "true_false",
+      } as QuestionOfKind<K>
     case "single_choice":
       return {
         ...base,
