@@ -2,10 +2,16 @@
 
 import * as React from "react"
 import type { QuizSettings } from "@workspace/quiz-core"
-import { Settings2 } from "lucide-react"
+import { CalendarIcon, Settings2 } from "lucide-react"
 import { Button } from "@workspace/ui/components/button"
+import { Calendar } from "@workspace/ui/components/calendar"
 import { Input } from "@workspace/ui/components/input"
 import { Label } from "@workspace/ui/components/label"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@workspace/ui/components/popover"
 import {
   Sheet,
   SheetContent,
@@ -139,18 +145,6 @@ function OpensAtField({
   onCommit: (opensAt: string | undefined) => void
 }) {
   const scheduled = opensAt !== undefined
-  // Held locally while typing: a half-finished datetime is not a time, and
-  // committing one would put an unparseable value in the document.
-  const [draft, setDraft] = React.useState<string | null>(null)
-
-  function handleChange(raw: string) {
-    setDraft(raw)
-    const at = new Date(raw)
-    if (raw && !Number.isNaN(at.getTime())) {
-      setDraft(null)
-      onCommit(at.toISOString())
-    }
-  }
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -173,22 +167,11 @@ function OpensAtField({
           value="scheduled"
           selected={scheduled}
           label="At a set time"
-          hint="A student who opens the link before then is told the exam has not opened yet."
+          hint="The link stays shut until then."
         >
           {/* Inside the option it belongs to, so the time and the choice that
               needs one cannot be read apart. */}
-          <Input
-            id="quiz-opens-at"
-            type="datetime-local"
-            aria-label="Opening time"
-            value={draft ?? toLocalInput(opensAt)}
-            onChange={(event) => handleChange(event.currentTarget.value)}
-            onBlur={() => setDraft(null)}
-            aria-invalid={draft !== null || undefined}
-          />
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Your own time zone.
-          </p>
+          <OpensAtPicker opensAt={opensAt} onCommit={onCommit} />
         </OpensOption>
       </RadioGroup>
     </div>
@@ -249,16 +232,92 @@ function defaultOpensAt(): string {
   return at.toISOString()
 }
 
-/** An instant as the local wall-clock text `datetime-local` expects. */
-function toLocalInput(iso: string | undefined): string {
-  if (!iso) return ""
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return ""
+/**
+ * A day from a calendar, a time from a field.
+ *
+ * Split, rather than one `datetime-local` box, because they are not typed the
+ * same way: a date is picked by looking at a month - "the Tuesday after the
+ * half term" is a thing you find, not a number you know - while a time is four
+ * digits somebody already has in mind. One control for both makes the easy
+ * half as fiddly as the hard half.
+ *
+ * Each edit carries the other value through, so setting a day does not reset
+ * the hour and setting the hour does not move the day.
+ */
+function OpensAtPicker({
+  opensAt,
+  onCommit,
+}: {
+  opensAt: string | undefined
+  onCommit: (opensAt: string) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const at = React.useMemo(() => {
+    const parsed = new Date(opensAt ?? "")
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+  }, [opensAt])
+
+  function pickDay(day: Date | undefined) {
+    if (!day) return
+    const next = new Date(at)
+    next.setFullYear(day.getFullYear(), day.getMonth(), day.getDate())
+    onCommit(next.toISOString())
+    setOpen(false)
+  }
+
+  function setTime(raw: string) {
+    const [hours, minutes] = raw.split(":").map(Number)
+    // An empty or half-typed field is not a time. Ignoring it leaves the
+    // document on the last real value rather than on something unparseable.
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return
+    const next = new Date(at)
+    next.setHours(hours as number, minutes as number, 0, 0)
+    onCommit(next.toISOString())
+  }
+
   const pad = (n: number) => String(n).padStart(2, "0")
+
   return (
-    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
-    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+    <div className="flex flex-col gap-1.5">
+      <div className="flex gap-2">
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <Button variant="outline" aria-label="Opening date" />
+            }
+          >
+            <CalendarIcon />
+            {formatDay(at)}
+          </PopoverTrigger>
+          <PopoverContent align="start">
+            <Calendar
+              mode="single"
+              selected={at}
+              defaultMonth={at}
+              autoFocus
+              onSelect={pickDay}
+            />
+          </PopoverContent>
+        </Popover>
+
+        <div className="w-28">
+          <Input
+            type="time"
+            aria-label="Opening time"
+            value={`${pad(at.getHours())}:${pad(at.getMinutes())}`}
+            onChange={(event) => setTime(event.currentTarget.value)}
+          />
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">Your own time zone.</p>
+    </div>
   )
+}
+
+/** The date as the teacher would write it, in whatever their locale is. */
+function formatDay(at: Date): string {
+  return at.toLocaleDateString(undefined, { dateStyle: "medium" })
 }
 
 /**
