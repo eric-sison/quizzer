@@ -128,6 +128,33 @@ describe("the points total", () => {
   })
 })
 
+describe("the title field", () => {
+  /** The invisible twin that gives the field its width, beside the input. */
+  function sizer() {
+    const cell = container.querySelector('[data-slot="input"]')!.parentElement!
+    return cell.previousElementSibling!
+  }
+
+  it("mirrors the title, so the box is as wide as the name in it", async () => {
+    await mount({
+      ...createQuizDoc("Introduction to Computer Science"),
+      questions: [],
+    })
+
+    expect(sizer().textContent).toBe("Introduction to Computer Science")
+    // Measured, never read out: the input already carries the title.
+    expect(sizer().getAttribute("aria-hidden")).toBe("true")
+  })
+
+  it("measures the placeholder while there is no title", async () => {
+    await mount({ ...createQuizDoc(""), questions: [] })
+
+    // Otherwise an untitled quiz collapses the field to nothing and the
+    // placeholder it is meant to show has nowhere to sit.
+    expect(sizer().textContent).toBe("Untitled quiz")
+  })
+})
+
 describe("the header's two halves", () => {
   it("reads state beside the title and actions at the far end", async () => {
     await mount(docWith([{ ...createQuestion("essay"), points: 3 }]))

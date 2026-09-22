@@ -13,9 +13,15 @@ const inputVariants = cva(
          * Edit in place: reads as the text around it until you point at it.
          * For a field that *is* the content, such as a title in a header, where
          * a permanent box would frame a heading like a form control.
+         *
+         * Text that outgrows the box is trimmed with an ellipsis while the
+         * field sits idle, the way the heading it stands in for would be:
+         * a hard cut mid-letter reads as a rendering fault. Focus hands it
+         * back to the browser, which scrolls the field as the caret moves,
+         * so the whole value stays reachable.
          */
         ghost:
-          "border-transparent font-medium hover:border-input dark:bg-transparent dark:hover:bg-input/30",
+          "border-transparent font-medium text-ellipsis hover:border-input dark:bg-transparent dark:hover:bg-input/30",
       },
     },
     defaultVariants: {

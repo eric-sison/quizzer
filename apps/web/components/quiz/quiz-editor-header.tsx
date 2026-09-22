@@ -90,14 +90,33 @@ export function QuizEditorHeader({
         <ChevronLeft />
       </Button>
 
-      <div className="max-w-xl min-w-0">
-        <Input
-          variant="ghost"
-          value={title}
-          onChange={(event) => onTitleChange(event.currentTarget.value)}
-          placeholder="Untitled quiz"
-          aria-label="Quiz title"
-        />
+      {/* The field is as wide as the name in it, the way a document title is:
+          a fixed box left a short name adrift in empty space. An invisible twin
+          of the text sizes the one grid cell the input is stretched across, so
+          the track runs from a placeholder-width floor up to the name's own
+          width and stops at max-w-xs, where a longer name would start crowding
+          out the rest of the header. `size={1}` keeps the input's own
+          20-character intrinsic width out of that measurement, and the ghost
+          variant trims what does not fit while the field is idle, handing the
+          browser back its usual scrolling once it has focus, so the whole name
+          stays readable and editable. */}
+      <div className="grid max-w-xs grid-cols-[minmax(7rem,max-content)] items-center">
+        <span
+          aria-hidden
+          className="invisible col-start-1 row-start-1 px-3 text-base font-medium whitespace-pre md:text-sm"
+        >
+          {title || "Untitled quiz"}
+        </span>
+        <div className="col-start-1 row-start-1">
+          <Input
+            variant="ghost"
+            size={1}
+            value={title}
+            onChange={(event) => onTitleChange(event.currentTarget.value)}
+            placeholder="Untitled quiz"
+            aria-label="Quiz title"
+          />
+        </div>
       </div>
 
       {/* What the quiz IS - its state - kept together and beside the name it
@@ -106,9 +125,7 @@ export function QuizEditorHeader({
           another control in the action row rather than as a readout. */}
       <div className="flex min-w-0 items-center gap-2">
         <Badge variant="outline">{STATUS_LABEL[status]}</Badge>
-        {hasUnpublishedChanges ? (
-          <Badge variant="secondary">Changes not published</Badge>
-        ) : null}
+        {hasUnpublishedChanges ? <Badge variant="secondary">Changes not published</Badge> : null}
 
         <span className="text-xs text-muted-foreground tabular-nums">
           {totalPoints} {totalPoints === 1 ? "pt" : "pts"}
@@ -124,14 +141,7 @@ export function QuizEditorHeader({
           fenced off so Undo does not sit in the same undifferentiated run as
           Publish. */}
       <div className="flex items-center gap-0.5">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Undo"
-          title="Undo (⌘Z)"
-          disabled={!canUndo}
-          onClick={onUndo}
-        >
+        <Button variant="ghost" size="icon-sm" aria-label="Undo" title="Undo (⌘Z)" disabled={!canUndo} onClick={onUndo}>
           <Undo2 />
         </Button>
         <Button
@@ -157,11 +167,7 @@ export function QuizEditorHeader({
         onDescriptionChange={onDescriptionChange}
       />
 
-      <Button
-        variant="outline"
-        nativeButton={false}
-        render={<Link href={previewHref} />}
-      >
+      <Button variant="outline" nativeButton={false} render={<Link href={previewHref} />}>
         <Eye />
         Preview
       </Button>
