@@ -16,6 +16,8 @@ use tauri::webview::InvokeRequest;
 use tauri::{App, Manager, WebviewWindow};
 use tauri::test::MockRuntime;
 
+use std::sync::atomic::Ordering;
+
 use crate::commands::{self, AppState};
 
 /// A token the fixture backend accepts. See `api/mock.rs`.
@@ -33,6 +35,7 @@ fn test_app() -> (App<MockRuntime>, WebviewWindow<MockRuntime>) {
             commands::report_event,
             commands::get_session_state,
             commands::get_lockdown_report,
+            commands::toggle_proctor_unlock,
             commands::quit_app,
         ])
         .build(mock_context(noop_assets()))
@@ -348,4 +351,106 @@ fn the_frontend_cannot_write_arbitrary_kinds_into_the_audit_log() {
         json!({ "kind": "exam_submitted", "detail": null }),
     )
     .expect("the command itself still succeeds");
+}
+
+/// The invigilator's override.
+///
+/// The bug this pins: the release held only until the student clicked back
+/// into the window, because the focus-gain handler re-asserted lockdown
+/// without asking whether anyone had deliberately turned it off. The student
+/// was left looking at a banner saying exam mode was off while the kiosk was
+/// quietly back on.
+#[test]
+fn a_proctor_release_survives_leaving_the_window_and_coming_back() {
+    let (app, window) = test_app();
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+    let state = app.state::<AppState>();
+
+    let released = call(&window, "toggle_proctor_unlock", json!({}))
+        .expect("an invigilator may release a live sitting");
+    assert_eq!(released, json!(true));
+    assert!(state.proctor_unlocked.load(Ordering::SeqCst));
+
+    // The trip away and back, which is the whole point of releasing.
+    let before = crate::lockdown::REASSERT_CALLS.load(Ordering::SeqCst);
+    commands::on_focus_lost(app.handle(), &window);
+    commands::on_focus_gained(app.handle(), &window);
+
+    assert_eq!(
+        crate::lockdown::REASSERT_CALLS.load(Ordering::SeqCst),
+        before,
+        "coming back to the window must not re-engage lockdown behind the invigilator"
+    );
+    assert!(state.proctor_unlocked.load(Ordering::SeqCst));
+
+    // The same trip without a release still re-engages, so the check above is
+    // measuring the override and not a handler that stopped working.
+    state.proctor_unlocked.store(false, Ordering::SeqCst);
+    commands::on_focus_gained(app.handle(), &window);
+    assert_eq!(
+        crate::lockdown::REASSERT_CALLS.load(Ordering::SeqCst),
+        before + 1,
+        "an ordinary focus gain must still re-assert"
+    );
+    state.proctor_unlocked.store(true, Ordering::SeqCst);
+
+    // And it toggles back, so the sitting can be resumed under invigilation.
+    let released_again = call(&window, "toggle_proctor_unlock", json!({}))
+        .expect("the same chord restores lockdown");
+    assert_eq!(released_again, json!(false));
+    assert!(!state.proctor_unlocked.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_release_is_recorded_and_never_silent() {
+    let (app, window) = test_app();
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+    let state = app.state::<AppState>();
+
+    call(&window, "toggle_proctor_unlock", json!({})).expect("should release");
+
+    // The audit trail is what makes a client-side override acceptable at all:
+    // anyone who learns the chord can use it, so using it must leave a mark.
+    let kinds: Vec<String> = state
+        .events
+        .take_batch()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+    assert!(
+        kinds.iter().any(|kind| kind == "lockdown_released"),
+        "expected a lockdown_released event, got {kinds:?}"
+    );
+}
+
+#[test]
+fn the_override_does_nothing_outside_a_sitting() {
+    let (_app, window) = test_app();
+
+    // Someone trying keystrokes on the link-entry screen learns nothing.
+    let err = call(&window, "toggle_proctor_unlock", json!({}))
+        .expect_err("there is no exam to release");
+    assert_eq!(error_code(&err), "no_session");
+}
+
+/// A focus loss during a release is logged but not counted: the student was
+/// told to leave the window, and striking them for it would be nonsense.
+#[test]
+fn a_sanctioned_absence_does_not_cost_the_student_a_strike() {
+    let (app, window) = test_app();
+    call(&window, "start_session", json!({ "raw": GOOD_LINK })).expect("should start");
+    let state = app.state::<AppState>();
+
+    commands::on_focus_lost(app.handle(), &window);
+    let struck = state.session.with(|s| s.strikes).unwrap_or(0);
+    assert_eq!(struck, 1, "an unsanctioned absence still counts");
+
+    call(&window, "toggle_proctor_unlock", json!({})).expect("should release");
+    commands::on_focus_lost(app.handle(), &window);
+
+    assert_eq!(
+        state.session.with(|s| s.strikes).unwrap_or(0),
+        struck,
+        "leaving the window during a release must not be struck"
+    );
 }

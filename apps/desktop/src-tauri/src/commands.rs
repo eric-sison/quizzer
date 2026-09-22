@@ -7,7 +7,7 @@
 //! session credential never crosses this boundary in either direction.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -38,6 +38,12 @@ pub struct AppState {
     /// order after a retry.
     pub answer_seq: AtomicU64,
     pub lockdown: Mutex<LockdownReport>,
+    /// An invigilator has deliberately suspended lockdown for this sitting.
+    ///
+    /// While set, focus losses are not struck: the whole point is that someone
+    /// in the room asked for the student to be able to leave the window, and
+    /// warning them for doing what they were told to do would be nonsense.
+    pub proctor_unlocked: AtomicBool,
 }
 
 impl AppState {
@@ -48,6 +54,7 @@ impl AppState {
             events: EventQueue::default(),
             answer_seq: AtomicU64::new(0),
             lockdown: Mutex::new(LockdownReport::default()),
+            proctor_unlocked: AtomicBool::new(false),
         }
     }
 }
@@ -166,6 +173,10 @@ pub async fn start_session<R: Runtime>(
     });
     state.events.reset();
     state.answer_seq.store(0, Ordering::SeqCst);
+    // A release belongs to the sitting it was granted in. Carrying it into the
+    // next exam would start that one with its focus warnings already switched
+    // off, and nobody in the room would know.
+    state.proctor_unlocked.store(false, Ordering::SeqCst);
 
     let report = lockdown::engage(&window);
     if let Ok(mut slot) = state.lockdown.lock() {
@@ -330,6 +341,55 @@ pub fn quit_app<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>) -> Ap
     Ok(())
 }
 
+/// Suspend or restore lockdown, at an invigilator's request.
+///
+/// **This is not a security boundary and must not be mistaken for one.** The
+/// chord that reaches it is typed into the exam window, so it is a secret, not
+/// a credential: anyone who learns it can use it, and a student who watches a
+/// teacher use it has learned it. What makes it acceptable is that it cannot
+/// be used quietly - every release and every restore is recorded for the
+/// proctor log, and the student's own screen says plainly that exam mode is
+/// off. An invigilation that has been switched off visibly and on the record
+/// is a supervisable thing; one that can be switched off silently is not.
+///
+/// Returns the state it left lockdown in: true for released.
+#[tauri::command]
+pub fn toggle_proctor_unlock<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    // Nothing to unlock outside a sitting, and answering at all off-session
+    // would tell anyone hunting for the chord that they had found something.
+    if !state.session.is_active() {
+        return Err(AppError::NoSession);
+    }
+
+    let unlocked = !state.proctor_unlocked.load(Ordering::SeqCst);
+    state.proctor_unlocked.store(unlocked, Ordering::SeqCst);
+
+    let report = if unlocked {
+        lockdown::release(&window);
+        state
+            .events
+            .record(kind::LOCKDOWN_RELEASED, Some("proctor override".to_string()));
+        // What the student is now looking at: an ordinary window.
+        lockdown::released_report()
+    } else {
+        let report = lockdown::engage(&window);
+        state
+            .events
+            .record(kind::LOCKDOWN_ENGAGED, Some("proctor override ended".to_string()));
+        report
+    };
+
+    if let Ok(mut current) = state.lockdown.lock() {
+        *current = report.clone();
+    }
+    let _ = window.emit(event::LOCKDOWN, &report);
+
+    Ok(unlocked)
+}
+
 #[tauri::command]
 pub fn get_session_state(state: State<'_, AppState>) -> SessionSnapshot {
     state.session.snapshot()
@@ -368,6 +428,16 @@ pub async fn flush_events(state: &AppState) {
 pub fn on_focus_lost<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) {
     let state = app.state::<AppState>();
     if !state.session.is_active() {
+        return;
+    }
+
+    // Sanctioned absence. Still recorded - the audit trail should show the
+    // student left the window - but not counted against them, and the window
+    // is not dragged back to the front while an invigilator is working.
+    if state.proctor_unlocked.load(Ordering::SeqCst) {
+        state
+            .events
+            .record(kind::FOCUS_LOST, Some("during proctor unlock".to_string()));
         return;
     }
 
@@ -414,5 +484,28 @@ pub fn on_focus_gained<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>
         return;
     }
     state.events.record(kind::FOCUS_RESTORED, None);
+
+    // Not while an invigilator has lockdown suspended. Re-asserting here is
+    // what made the override appear to work once and then stop: the release
+    // held until the student clicked back into the window, at which point this
+    // silently re-engaged the kiosk while the banner still read "exam mode
+    // off". The override has to survive a trip away from the window - leaving
+    // the window is the entire point of it.
+    // Not while an invigilator has lockdown suspended. Re-asserting here is
+    // what made the override appear to work once and then stop: the release
+    // held until the student clicked back into the window, at which point this
+    // silently re-engaged the kiosk while the banner still read "exam mode
+    // off". The override has to survive a trip away from the window - leaving
+    // the window is the entire point of it.
+    // Not while an invigilator has lockdown suspended. Re-asserting here is
+    // what made the override appear to work once and then stop: the release
+    // held until the student clicked back into the window, at which point this
+    // silently re-engaged the kiosk while the banner still read "exam mode
+    // off". The override has to survive a trip away from the window - leaving
+    // the window is the entire point of it.
+    if state.proctor_unlocked.load(Ordering::SeqCst) {
+        return;
+    }
+
     lockdown::reassert(window);
 }

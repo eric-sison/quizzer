@@ -61,6 +61,17 @@ export function getLockdownReport(): Promise<LockdownReport> {
   return invoke<LockdownReport>("get_lockdown_report")
 }
 
+/**
+ * Suspend or restore lockdown at an invigilator's request. Resolves with the
+ * state lockdown was left in: true for released.
+ *
+ * Rejects when no exam is running, so the chord that reaches this gives
+ * nothing away to someone trying keystrokes on the link-entry screen.
+ */
+export function toggleProctorUnlock(): Promise<boolean> {
+  return invoke<boolean>("toggle_proctor_unlock")
+}
+
 /** Refused by Rust while an exam is active. */
 export function quitApp(): Promise<void> {
   return invoke<void>("quit_app")

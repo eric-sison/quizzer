@@ -70,6 +70,8 @@ export type LockdownReport = {
   /** A measure that was expected to apply didn't. Inherent limits don't set this. */
   degraded: boolean
   bypassed: boolean
+  /** An invigilator deliberately suspended lockdown for this sitting. */
+  released: boolean
 }
 
 export type StartPayload = {

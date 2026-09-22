@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { useExamSession } from "@/hooks/use-exam-session"
+import { useProctorUnlock } from "@/hooks/use-proctor-unlock"
 import { installGuardBridge } from "@/lib/ipc"
 import { Exam } from "@/screens/exam"
 import { ExamError } from "@/screens/exam-error"
@@ -10,6 +11,10 @@ import { Submitted } from "@/screens/submitted"
 
 function App() {
   const session = useExamSession()
+
+  // Only while an exam is on screen: there is nothing to release before one
+  // starts, and nothing to release after it is submitted.
+  useProctorUnlock(session.screen === "exam")
 
   // `guard.js` runs before this bundle exists, so it publishes through a global
   // that we fill in here. Until then its reports are silently dropped, which is

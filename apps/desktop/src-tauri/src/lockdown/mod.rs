@@ -58,6 +58,12 @@ pub struct LockdownReport {
     pub degraded: bool,
     /// True when running with `--unlocked` in a debug build.
     pub bypassed: bool,
+    /// True while an invigilator has deliberately suspended lockdown.
+    ///
+    /// Distinct from `degraded`, which means a measure failed on its own. This
+    /// one means a person switched it off, and the UI says so in as many words
+    /// - an override nobody in the room can see is not supervision.
+    pub released: bool,
 }
 
 impl LockdownReport {
@@ -76,6 +82,11 @@ impl LockdownReport {
         self.degraded = true;
     }
 }
+
+/// How many times `reassert` has been asked to re-engage lockdown. Test-only
+/// instrumentation; see the comment in `reassert`.
+#[cfg(test)]
+pub static REASSERT_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Developer escape hatch. Honoured only in debug builds - a release binary
 /// ignores the flag entirely, so it cannot be used to soften a real exam.
@@ -133,6 +144,14 @@ pub fn engage<R: Runtime>(window: &WebviewWindow<R>) -> LockdownReport {
 /// and both platforms can lose always-on-top to another window forcing itself
 /// forward. Called every time focus returns.
 pub fn reassert<R: Runtime>(window: &WebviewWindow<R>) {
+    // Counted before the bypass check, because under test everything below is
+    // skipped - and "did we decide to re-engage" is exactly what the override
+    // tests need to see. Without this the assertion can only inspect a flag
+    // that re-asserting never touched, and passes whether or not the bug is
+    // present.
+    #[cfg(test)]
+    REASSERT_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
     if is_bypassed() {
         return;
     }
@@ -149,6 +168,18 @@ pub fn force_foreground<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.show();
     let _ = window.set_focus();
     platform::force_foreground(window);
+}
+
+/// What to report while an invigilator has lockdown suspended.
+///
+/// Built here rather than by the caller so the report's own rules stay in this
+/// module: this counts as `degraded`, because measured against an exam that is
+/// still running, nothing is in force.
+pub fn released_report() -> LockdownReport {
+    let mut report = LockdownReport::default();
+    report.failed("all lockdown (released by an invigilator)");
+    report.released = true;
+    report
 }
 
 /// Undo everything. Must run before the app exits, or macOS can leave the user

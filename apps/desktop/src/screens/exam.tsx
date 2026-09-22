@@ -7,6 +7,7 @@ import {
   Loader2,
   Lock,
   Timer,
+  Unlock,
 } from "lucide-react"
 import { countAnswered } from "@workspace/quiz-core"
 import { QuestionView, seededShuffle } from "@workspace/quiz-ui"
@@ -110,6 +111,8 @@ export function Exam({
           onDismiss={onDismissStrike}
         />
       ) : null}
+
+      {lockdown?.released ? <ReleasedBanner /> : null}
 
       {timeUp ? <TimeUpBanner /> : null}
 
@@ -255,6 +258,32 @@ function SubmitConfirmation({
         <Button size="lg" variant="outline" disabled={submitting} onClick={onCancel}>
           Keep working
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Says, unmissably, that invigilation is off.
+ *
+ * The override exists for the room to use, and this is the half that keeps it
+ * honest: a release nobody can see is indistinguishable from a student having
+ * found a way out, both to the person invigilating and to anyone reading the
+ * log afterwards. It stays up until lockdown is restored.
+ */
+function ReleasedBanner() {
+  return (
+    <div
+      role="status"
+      className="border-b border-destructive/30 bg-destructive/10 px-6 py-3"
+    >
+      <div className="mx-auto flex w-full max-w-3xl items-center gap-2.5 text-sm">
+        <Unlock className="size-4 shrink-0 text-destructive" aria-hidden />
+        <p>
+          <strong className="font-medium">Exam mode is off.</strong> An
+          invigilator released this computer. It has been recorded, and your
+          exam is still running.
+        </p>
       </div>
     </div>
   )
@@ -412,11 +441,13 @@ function LockdownBadge({ lockdown }: { lockdown: LockdownReport | null }) {
         aria-expanded={open}
       >
         <Lock aria-hidden />
-        {lockdown.bypassed
-          ? "Lockdown off"
-          : lockdown.degraded
-            ? "Exam mode (limited)"
-            : "Exam mode"}
+        {lockdown.released
+          ? "Exam mode off"
+          : lockdown.bypassed
+            ? "Lockdown off"
+            : lockdown.degraded
+              ? "Exam mode (limited)"
+              : "Exam mode"}
       </Button>
 
       {open ? (

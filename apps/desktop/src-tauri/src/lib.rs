@@ -76,6 +76,7 @@ pub fn run() {
             commands::report_event,
             commands::get_session_state,
             commands::get_lockdown_report,
+            commands::toggle_proctor_unlock,
             commands::quit_app,
         ])
         .setup(|app| {
