@@ -4,6 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
+    // This app emits nothing, and declaration mode would reject Better Auth's
+    // inferred instance type as non-portable under pnpm (TS2742).
+    "declaration": false,
+    "declarationMap": false,
     "lib": ["ES2023"],
     "types": ["node"]
   },

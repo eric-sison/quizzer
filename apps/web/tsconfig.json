@@ -1,6 +1,11 @@
 {
   "extends": "@workspace/typescript-config/nextjs.json",
   "compilerOptions": {
+    // An app, not a library: nothing consumes .d.ts from here, and declaration
+    // checking chokes (TS2742) on better-auth types that reach into its own
+    // pnpm-nested copy of better-call.
+    "declaration": false,
+    "declarationMap": false,
     "paths": {
       "@/*": ["./*"],
       "@workspace/ui/*": ["../../packages/ui/src/*"]
