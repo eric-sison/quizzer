@@ -142,6 +142,13 @@ export const startSessionRequestSchema = z.strictObject({
  * Pre-flight look at an exam's configuration, shown on the link-entry screen
  * before the student commits to lockdown. Token-authorised like a session
  * claim, but claims nothing: no session row, no credential, no questions.
+ *
+ * This is the one place a link that is not open yet still answers. A session
+ * claim refuses it, and must: the preview exists so a student who has just
+ * been handed a link can read what they are about to sit and when it starts,
+ * which is a strictly better answer than the door being shut with no notice
+ * on it. Nothing here is more than the configuration a published link already
+ * gives out the moment it opens.
  */
 export const previewExamRequestSchema = z.strictObject({
   token: z.string().min(16).max(128),
@@ -154,6 +161,19 @@ export const previewExamResponseSchema = z.strictObject({
   allow_backtracking: z.boolean(),
   shuffle_questions: z.boolean(),
   question_count: z.number().int().min(0),
+  /**
+   * Present only while the link is still shut. Absent means it is open now,
+   * so the client never has to compare this against its own clock to find out
+   * whether it may start.
+   */
+  opens_at: epochSeconds.optional(),
+  /**
+   * The server's clock at the moment of the answer, so a countdown to
+   * `opens_at` is drawn against the clock that decides, not the student's.
+   * The gate is enforced server-side either way; this is so the waiting
+   * screen does not lie on a machine whose clock is wrong.
+   */
+  server_time: epochSeconds,
 })
 
 export const startSessionResponseSchema = z.strictObject({

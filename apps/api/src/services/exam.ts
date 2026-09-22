@@ -38,11 +38,25 @@ import type { ExamSessionContext } from "../lib/hono"
  * Token → the active published version, with every way a link can be dead
  * mapped to its own code. Shared by the session claim and the pre-flight
  * preview so the two can never disagree about whether a link works.
+ *
+ * `allowUnopened` is the single, deliberate exception. A link whose opening
+ * time has not come is not dead, it is early, and the preview's whole job is
+ * to say so with the details attached. Only the preview passes it, and it
+ * widens nothing else: a revoked, expired, archived or unknown link still
+ * throws here, and the claim below calls this without it, so the door itself
+ * is unchanged.
  */
 async function resolveActiveVersion(
   token: string,
-  now: Date
-): Promise<{ token: string; versionId: string; manifest: ExamManifest }> {
+  now: Date,
+  { allowUnopened = false }: { allowUnopened?: boolean } = {}
+): Promise<{
+  token: string
+  versionId: string
+  manifest: ExamManifest
+  /** Set only when the link is still shut, and only for a caller that allows it. */
+  opensAt: Date | null
+}> {
   const [link] = await db
     .select({
       token: examLinks.token,
@@ -63,7 +77,8 @@ async function resolveActiveVersion(
     throw new ApiError("revoked", 403, "This exam was closed by your teacher.")
   }
 
-  if (link.opensAt && link.opensAt.getTime() > now.getTime()) {
+  const unopened = Boolean(link.opensAt && link.opensAt.getTime() > now.getTime())
+  if (unopened && !allowUnopened) {
     throw new ApiError("not_yet_open", 403, "This exam has not opened yet.")
   }
   if (link.closesAt && link.closesAt.getTime() <= now.getTime()) {
@@ -82,16 +97,30 @@ async function resolveActiveVersion(
     throw new ApiError("invalid_token", 404, "This link does not work.")
   }
 
-  return { token: link.token, versionId: version.id, manifest: version.manifest }
+  return {
+    token: link.token,
+    versionId: version.id,
+    manifest: version.manifest,
+    opensAt: unopened ? link.opensAt : null,
+  }
 }
 
 /**
  * The exam's configuration, for the link-entry screen. Deliberately not the
  * manifest: no questions, no credential, no session row. A student reading
  * this has committed to nothing.
+ *
+ * Answers for a link that has not opened yet, with `opens_at` set. The
+ * alternative was the door shut on a bare "this exam has not opened yet",
+ * which tells a student nothing they can act on: not whether they have the
+ * right link, not what they are sitting, not whether to wait five minutes or
+ * come back tomorrow. Starting is still refused, by `startSession`.
  */
 export async function previewExam(token: string): Promise<PreviewExamResponse> {
-  const { manifest } = await resolveActiveVersion(token, new Date())
+  const now = new Date()
+  const { manifest, opensAt } = await resolveActiveVersion(token, now, {
+    allowUnopened: true,
+  })
 
   return {
     title: manifest.title,
@@ -100,6 +129,8 @@ export async function previewExam(token: string): Promise<PreviewExamResponse> {
     allow_backtracking: manifest.allow_backtracking,
     shuffle_questions: manifest.shuffle_questions ?? false,
     question_count: manifest.questions.length,
+    ...(opensAt ? { opens_at: epochSeconds(opensAt) } : {}),
+    server_time: epochSeconds(now),
   }
 }
 

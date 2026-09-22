@@ -174,9 +174,14 @@ describe("POST /api/exam/preview", () => {
       "allow_backtracking",
       "duration_s",
       "question_count",
+      "server_time",
       "shuffle_questions",
       "title",
     ])
+    // Absent, not null: an open link says nothing about an opening time, so
+    // the client never has to compare a date against its own clock to learn
+    // whether it may start.
+    expect("opens_at" in preview).toBe(false)
     expect(preview).toMatchObject({
       title: "Exam surface",
       duration_s: 600,
@@ -244,19 +249,54 @@ describe("POST /api/exam/preview", () => {
     expect(await revoked.json()).toMatchObject({ error: { code: "revoked" } })
   })
 
-  it("refuses a link whose opening time has not come, and says which it is", async () => {
+  it("describes a link that has not opened yet, and says when it will", async () => {
+    const link = await publishedQuiz(600)
+    const opensAt = new Date(Date.now() + 60 * 60 * 1_000)
+    await db
+      .update(examLinks)
+      .set({ opensAt })
+      .where(eq(examLinks.token, link.token))
+
+    // The preview answers. A shut door with nothing written on it tells a
+    // student neither whether they have the right link nor whether to wait
+    // five minutes or come back tomorrow; the configuration is what a link
+    // gives out the moment it opens anyway.
+    const res = await previewExam(link.token)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      title: "Exam surface",
+      question_count: 3,
+      duration_s: 600,
+      opens_at: Math.floor(opensAt.getTime() / 1_000),
+    })
+  })
+
+  it("carries a server clock to measure the wait against", async () => {
     const link = await publishedQuiz()
     await db
       .update(examLinks)
       .set({ opensAt: new Date(Date.now() + 60 * 60 * 1_000) })
       .where(eq(examLinks.token, link.token))
 
-    // Both doors, because the student meets the preview first: pasting the
-    // link has to say the exam is not open yet, not fail silently and then
-    // refuse at Begin.
-    const preview = await previewExam(link.token)
-    expect(preview.status).toBe(403)
-    expect(await preview.json()).toMatchObject({ error: { code: "not_yet_open" } })
+    const preview = (await (await previewExam(link.token)).json()) as {
+      opens_at: number
+      server_time: number
+    }
+
+    // The countdown is drawn against the clock that decides, not the one on
+    // the student's machine, which on a locked-down exam laptop is exactly
+    // the thing nobody should be relying on.
+    expect(preview.server_time).toBeGreaterThan(0)
+    expect(preview.opens_at - preview.server_time).toBeGreaterThan(3_500)
+    expect(preview.opens_at - preview.server_time).toBeLessThanOrEqual(3_600)
+  })
+
+  it("still refuses to start one, which is the gate that matters", async () => {
+    const link = await publishedQuiz()
+    await db
+      .update(examLinks)
+      .set({ opensAt: new Date(Date.now() + 60 * 60 * 1_000) })
+      .where(eq(examLinks.token, link.token))
 
     const claim = await app.request("/api/exam/session", {
       method: "POST",
@@ -269,6 +309,28 @@ describe("POST /api/exam/preview", () => {
     })
     expect(claim.status).toBe(403)
     expect(await claim.json()).toMatchObject({ error: { code: "not_yet_open" } })
+
+    // And claims nothing on the way to refusing.
+    const rows = await db
+      .select({ id: examSessions.id })
+      .from(examSessions)
+      .where(eq(examSessions.token, link.token))
+    expect(rows).toHaveLength(0)
+  })
+
+  it("does not extend the same latitude to a link that is dead rather than early", async () => {
+    const link = await publishedQuiz()
+    await db
+      .update(examLinks)
+      .set({
+        opensAt: new Date(Date.now() - 60 * 60 * 1_000),
+        closesAt: new Date(Date.now() - 1_000),
+      })
+      .where(eq(examLinks.token, link.token))
+
+    const expired = await previewExam(link.token)
+    expect(expired.status).toBe(410)
+    expect(await expired.json()).toMatchObject({ error: { code: "expired" } })
   })
 
   it("opens the moment the time passes", async () => {
