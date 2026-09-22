@@ -14,8 +14,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@workspace/ui/components/sheet"
+import { RadioGroup, RadioGroupItem } from "@workspace/ui/components/radio-group"
 import { Switch } from "@workspace/ui/components/switch"
-import { Tabs, TabsList, TabsTrigger } from "@workspace/ui/components/tabs"
 import { Textarea } from "@workspace/ui/components/textarea"
 
 /** Bounds mirror quizSettingsSchema's durationS range of 1s-24h. */
@@ -121,10 +121,11 @@ export function QuizSettingsSheet({
 /**
  * When the link starts working.
  *
- * Two states rather than a nullable field with a disabled input, because they
- * are two different intentions: "the moment I publish" and "at this time".
- * Choosing a time seeds the box with tomorrow morning rather than empty, so
- * the common case is one edit and not four.
+ * Two options rather than a nullable field with a disabled input, because
+ * they are two different intentions: "the moment I publish" and "at this
+ * time". Each says what it does to a student, since that is what is being
+ * chosen between. Choosing a time seeds the box with tomorrow morning rather
+ * than empty, so the common case is one edit and not four.
  *
  * `datetime-local` reads and writes the teacher's own wall clock; the document
  * stores an instant. The conversion happens here, at the edge, so nothing
@@ -155,20 +156,27 @@ function OpensAtField({
     <div className="flex flex-col gap-1.5">
       <Label>Opens</Label>
 
-      <Tabs
+      <RadioGroup
         value={scheduled ? "scheduled" : "immediately"}
         onValueChange={(mode) =>
           onCommit(mode === "scheduled" ? defaultOpensAt() : undefined)
         }
       >
-        <TabsList>
-          <TabsTrigger value="immediately">As soon as published</TabsTrigger>
-          <TabsTrigger value="scheduled">At a set time</TabsTrigger>
-        </TabsList>
-      </Tabs>
+        <OpensOption
+          value="immediately"
+          selected={!scheduled}
+          label="As soon as published"
+          hint="The link works the moment you publish."
+        />
 
-      {scheduled ? (
-        <div className="mt-1 flex flex-col gap-1.5">
+        <OpensOption
+          value="scheduled"
+          selected={scheduled}
+          label="At a set time"
+          hint="A student who opens the link before then is told the exam has not opened yet."
+        >
+          {/* Inside the option it belongs to, so the time and the choice that
+              needs one cannot be read apart. */}
           <Input
             id="quiz-opens-at"
             type="datetime-local"
@@ -178,16 +186,56 @@ function OpensAtField({
             onBlur={() => setDraft(null)}
             aria-invalid={draft !== null || undefined}
           />
-          <p className="text-xs text-muted-foreground">
-            Your own time zone. A student who opens the link before then is told
-            the exam has not opened yet.
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Your own time zone.
           </p>
+        </OpensOption>
+      </RadioGroup>
+    </div>
+  )
+}
+
+/**
+ * One choice, its consequence, and - when it has one - the field it needs.
+ *
+ * The hint is part of the option rather than a line under the group because
+ * the two options differ in what they do to a student, not in their wording,
+ * and that is the thing being chosen between.
+ */
+function OpensOption({
+  value,
+  selected,
+  label,
+  hint,
+  children,
+}: {
+  value: string
+  selected: boolean
+  label: string
+  hint: string
+  children?: React.ReactNode
+}) {
+  const id = `quiz-opens-${value}`
+
+  return (
+    <div
+      data-selected={selected || undefined}
+      className="rounded-lg border px-3 py-2.5 transition-colors data-selected:border-primary/40 data-selected:bg-primary/5"
+    >
+      {/* Associated by id rather than by wrapping, so the row's layout lives on
+          these plain elements and the shared Label and RadioGroupItem are used
+          as the design system ships them. */}
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex">
+          <RadioGroupItem id={id} value={value} />
+        </span>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={id}>{label}</Label>
+          <p className="text-xs text-muted-foreground">{hint}</p>
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          The link works the moment you publish.
-        </p>
-      )}
+      </div>
+
+      {selected && children ? <div className="mt-2.5 pl-6">{children}</div> : null}
     </div>
   )
 }

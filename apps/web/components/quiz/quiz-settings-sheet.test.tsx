@@ -47,10 +47,16 @@ async function open(
   })
 }
 
-function tab(name: string) {
-  return [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+/** The radio for one option, reached the way a click on its label would. */
+function option(name: string) {
+  const label = [...document.querySelectorAll<HTMLLabelElement>("label")].find(
     (el) => el.textContent === name
   )
+  if (!label?.htmlFor) throw new Error(`no option labelled ${name}`)
+
+  const radio = document.getElementById(label.htmlFor)
+  if (!radio) throw new Error(`${name} labels nothing`)
+  return radio
 }
 
 function openingInput() {
@@ -71,7 +77,7 @@ describe("the opening time", () => {
     const seen: QuizSettings[] = []
     await open(base, (next) => seen.push(next))
 
-    await act(async () => tab("At a set time")!.click())
+    await act(async () => option("At a set time").click())
 
     const stored = seen.at(-1)?.opensAt
     expect(stored).toBeDefined()
@@ -107,7 +113,7 @@ describe("the opening time", () => {
 
     expect(seen.at(-1)?.opensAt).toBe(new Date(2026, 8, 22, 14, 30).toISOString())
 
-    await act(async () => tab("As soon as published")!.click())
+    await act(async () => option("As soon as published").click())
 
     // Absent, not undefined: the document schema is strict, and a key holding
     // nothing is not the same as no key.
