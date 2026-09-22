@@ -118,13 +118,20 @@ describe("one question per page", () => {
     expect(button("Submit")?.disabled).toBe(true)
   })
 
-  it("disables going back when the quiz forbids it", async () => {
+  it("still lets the teacher go back when the quiz forbids it", async () => {
+    // The rule binds the student, not the person checking the paper: a one-way
+    // preview would mean reopening the whole quiz to re-read question two. It
+    // is enforced in the exam client, where it applies.
     await show(manifestOf({ allowBacktracking: false }))
 
     await act(async () => button("Next")!.click())
+    expect(button("Previous")?.disabled).toBe(false)
 
-    expect(button("Previous")?.disabled).toBe(true)
-    expect(container.textContent).toContain("no going back")
+    await act(async () => button("Previous")!.click())
+    expect(container.textContent).toContain("1 of")
+
+    // The setting itself is still stated, so nothing about it is hidden.
+    expect(container.textContent).toContain("Students cannot go back")
   })
 
   it("keeps an answer while paging away and back", async () => {

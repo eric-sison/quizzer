@@ -29,9 +29,14 @@ import { formatDuration } from "@/lib/format"
  * The answers live in local state and go nowhere: this is a rehearsal, and a
  * preview that recorded attempts would be a way to pollute real results.
  *
- * What is deliberately *not* faithful: there is no countdown, and Submit does
- * nothing. A timer here would either be a lie or would run a teacher out of
- * time while they read their own questions.
+ * What is deliberately *not* faithful: there is no countdown, Submit does
+ * nothing, and Previous always works. A timer here would either be a lie or
+ * would run a teacher out of time while they read their own questions, and a
+ * one-way preview would make a teacher who turned backtracking off reopen the
+ * whole quiz to re-read question two. The rule is real and it is enforced
+ * where it applies - in the exam client, against the student sitting the
+ * paper. The header says which way the setting is set, so nothing here hides
+ * it.
  */
 export function PreviewShell({
   quizId,
@@ -146,7 +151,12 @@ export function PreviewShell({
           <div className="mx-auto flex w-full max-w-2xl items-center gap-3">
             <Button
               variant="outline"
-              disabled={at === 0 || !manifest.allow_backtracking}
+              disabled={at === 0}
+              title={
+                manifest.allow_backtracking
+                  ? undefined
+                  : "Students cannot go back. The preview lets you, so you can re-read your own questions."
+              }
               onClick={() => setAt((i) => Math.max(0, i - 1))}
             >
               <ChevronLeft />
@@ -155,7 +165,6 @@ export function PreviewShell({
 
             <span className="text-xs text-muted-foreground">
               {at + 1} of {total}
-              {manifest.allow_backtracking ? "" : ", no going back"}
             </span>
 
             <div className="flex-1" />
