@@ -21,7 +21,11 @@ export type ExamClaims = {
   /** The session id. */
   sub: string
   aud: typeof EXAM_AUDIENCE
-  /** Expiry, epoch seconds. Checked by `verify`, and again against the row. */
+  /**
+   * Token expiry, epoch seconds. NOT the exam deadline: it runs past it by
+   * `SUBMIT_GRACE_S` so the submit at the buzzer can authenticate. What the
+   * student may still write is decided by the session row, not by this.
+   */
   exp: number
   iat: number
 }
@@ -33,11 +37,29 @@ export type ExamClaims = {
  */
 const ALGORITHM = "HS256"
 
+/**
+ * How long a session credential outlives the exam it belongs to.
+ *
+ * The token MUST outlast the deadline, because the one call that has to
+ * succeed is the one that happens after time runs out: the client submits at
+ * the buzzer, and a credential that expired on the same second would make
+ * every auto-submit fail authentication and retry forever. The same goes for
+ * the heartbeat a client uses to discover it is over, and for the proctor
+ * events around the end of a sitting - which is exactly the stretch of the
+ * audit trail a teacher cares about.
+ *
+ * This grace does NOT extend the exam. What a student may still write is
+ * decided by `assertWritable` against the session row's own `expiresAt`, so an
+ * answer sent one second past the deadline is refused with a live token in
+ * hand. The grace buys the end-of-exam calls, nothing else.
+ */
+export const SUBMIT_GRACE_S = 10 * 60
+
 export async function signExamToken(sessionId: string, expiresAt: Date): Promise<string> {
   const claims: ExamClaims = {
     sub: sessionId,
     aud: EXAM_AUDIENCE,
-    exp: Math.floor(expiresAt.getTime() / 1_000),
+    exp: Math.floor(expiresAt.getTime() / 1_000) + SUBMIT_GRACE_S,
     iat: Math.floor(Date.now() / 1_000),
   }
   return sign(claims, env.EXAM_JWT_SECRET, ALGORITHM)

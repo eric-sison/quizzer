@@ -34,7 +34,7 @@ import {
   quizzes as quizzesTable,
 } from "../../db/schema"
 import { env } from "../../env"
-import { signExamToken } from "../../lib/exam-token"
+import { signExamToken, SUBMIT_GRACE_S } from "../../lib/exam-token"
 
 const app = createApp()
 
@@ -448,9 +448,12 @@ describe("the two credentials are not interchangeable", () => {
 
   it("refuses a token whose expiry has passed", async () => {
     const { session } = await sitting()
+    // Further back than the submit grace: a token signed from a deadline one
+    // minute ago is still live on purpose, so that the auto-submit at the
+    // buzzer can authenticate. This is the one that has genuinely run out.
     const stale = await signExamToken(
       await sessionIdOf(session),
-      new Date(Date.now() - 60_000)
+      new Date(Date.now() - (SUBMIT_GRACE_S + 60) * 1_000)
     )
 
     const res = await post("/api/exam/heartbeat", stale, { elapsed_s: 1 })
@@ -787,6 +790,57 @@ describe("POST /api/exam/submit", () => {
     const res = await post("/api/exam/submit", session.session_jwt, {
       idempotency_key: "attempt-0000000006",
     })
+    expect(res.status).toBe(200)
+  })
+
+  it("accepts it with the credential the client is actually holding", async () => {
+    // The test above moves the row but keeps a token minted from a deadline
+    // still forty minutes out, so it passed while auto-submit was failing in
+    // the field. What a client holds at the buzzer is a token signed from the
+    // deadline that has now passed - and if that token expires on the same
+    // second, the one call that must succeed is the one that cannot.
+    const { session } = await sitting()
+    const id = await sessionIdOf(session)
+    const deadline = new Date(Date.now() - 1_000)
+
+    await db.update(examSessions).set({ expiresAt: deadline }).where(eq(examSessions.id, id))
+    const atTheBuzzer = await signExamToken(id, deadline)
+
+    const res = await post("/api/exam/submit", atTheBuzzer, {
+      idempotency_key: "attempt-0000000007",
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it("does not let that grace period buy any extra writing time", async () => {
+    // The token outliving the deadline must not extend the exam. Whether a
+    // student may still answer is the session row's decision, not the token's.
+    const { session } = await sitting()
+    const id = await sessionIdOf(session)
+    const deadline = new Date(Date.now() - 1_000)
+
+    await db.update(examSessions).set({ expiresAt: deadline }).where(eq(examSessions.id, id))
+    const atTheBuzzer = await signExamToken(id, deadline)
+
+    const res = await post("/api/exam/answer", atTheBuzzer, {
+      question_id: session.exam.questions[0]!.id,
+      value: "too late",
+      client_seq: 50,
+    })
+
+    expect(res.status).toBe(410)
+    expect(await res.json()).toMatchObject({ error: { code: "expired" } })
+  })
+
+  it("still heartbeats on it, so a client that slept past the end finds out", async () => {
+    const { session } = await sitting()
+    const id = await sessionIdOf(session)
+    const deadline = new Date(Date.now() - 1_000)
+
+    await db.update(examSessions).set({ expiresAt: deadline }).where(eq(examSessions.id, id))
+    const atTheBuzzer = await signExamToken(id, deadline)
+
+    const res = await post("/api/exam/heartbeat", atTheBuzzer, { elapsed_s: 9_999 })
     expect(res.status).toBe(200)
   })
 })
