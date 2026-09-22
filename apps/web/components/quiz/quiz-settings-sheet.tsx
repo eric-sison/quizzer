@@ -280,27 +280,33 @@ function OpensAtPicker({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex gap-2">
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger
-            render={
-              <Button variant="outline" aria-label="Opening date" />
-            }
-          >
-            <CalendarIcon />
-            {formatDay(at)}
-          </PopoverTrigger>
-          <PopoverContent align="start">
-            <Calendar
-              mode="single"
-              selected={at}
-              defaultMonth={at}
-              autoFocus
-              onSelect={pickDay}
-            />
-          </PopoverContent>
-        </Popover>
+        {/* The trigger is a Button, which sizes to its content and declines to
+            shrink, so a flexible wrapper alone leaves it at its natural width.
+            Stretched from here rather than by a class on the Button itself:
+            how wide it is belongs to this row, not to the shared component. */}
+        <div className="min-w-0 flex-1 [&_button]:w-full">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+              render={<Button variant="outline" aria-label="Opening date" />}
+            >
+              <CalendarIcon />
+              {formatDay(at)}
+            </PopoverTrigger>
+            <PopoverContent align="start">
+              <Calendar
+                mode="single"
+                selected={at}
+                defaultMonth={at}
+                autoFocus
+                onSelect={pickDay}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
 
-        <div className="w-28">
+        {/* Four digits and a separator: wide enough for the value and the
+            browser's own spinner, and no wider. */}
+        <div className="w-32 shrink-0">
           <Input
             type="time"
             aria-label="Opening time"
