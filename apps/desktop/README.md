@@ -243,7 +243,8 @@ With `--features mock-api`, paste `http://localhost:3000/e/<token>`:
 | `mockexamtoken000000007` | A 2-minute exam, for testing deadline auto-submit |
 | `mockexamtoken000000002` | `expired` |
 | `mockexamtoken000000003` | `already_submitted` |
-| `mockexamtoken000000004` | `not_yet_open` |
+| `mockexamtoken000000004` | Opens in 26 hours: the waiting card, and `not_yet_open` at Begin |
+| `mockexamtoken000000008` | Opens in 30 seconds, to watch the wait end and Begin turn itself on |
 | `mockexamtoken000000005` | `revoked` |
 | `mockexamtoken000000006` | `network_unavailable` |
 | anything else | `invalid_link` |

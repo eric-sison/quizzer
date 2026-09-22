@@ -117,6 +117,16 @@ pub struct PreviewResponse {
     pub shuffle_questions: bool,
     #[serde(default)]
     pub question_count: u32,
+    /// Set only while the link is still shut: epoch seconds at which it opens.
+    /// Its absence is the client's answer to "may I start", so the frontend
+    /// never compares a date against the machine clock to decide that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opens_at: Option<u64>,
+    /// The server's clock when it answered, so a countdown to `opens_at` is
+    /// drawn against the clock that decides. `None` from a server too old to
+    /// send it, in which case the frontend falls back to its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_time: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

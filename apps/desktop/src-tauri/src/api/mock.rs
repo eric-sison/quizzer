@@ -28,6 +28,9 @@ const TOKEN_REVOKED: &str = "mockexamtoken000000005";
 const TOKEN_OFFLINE: &str = "mockexamtoken000000006";
 /// Two-minute exam, for testing auto-submit on timeout without waiting around.
 const TOKEN_SHORT: &str = "mockexamtoken000000007";
+/// Opens in thirty seconds, so the wait ending and Begin turning itself on can
+/// be watched without editing a fixture date.
+const TOKEN_SOON: &str = "mockexamtoken000000008";
 
 const MOCK_JWT: &str = "mock-session-jwt";
 const DEFAULT_DURATION_S: u64 = 45 * 60;
@@ -42,6 +45,13 @@ const MOCK_IMAGE_PNG: &[u8] = &[
     0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x05, 0x00, 0x01, 0x87, 0xA1, 0x4E, 0xD4, 0x00, 0x00,
     0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
+
+/// What a live fixture link resolves to: how long it runs, and when it opens.
+struct Resolved {
+    duration_s: u64,
+    /// Set only while the link is still shut, as on the real backend.
+    opens_at: Option<u64>,
+}
 
 #[derive(Default)]
 struct MockState {
@@ -71,37 +81,55 @@ impl ApiClient {
     /// Every way a link can be dead, shared by preview and session claim so
     /// the fixture can never disagree with itself the way the real backend
     /// (which shares its resolution too) never will.
-    fn resolve(token: &str) -> AppResult<u64> {
-        match token {
-            TOKEN_EXPIRED => Err(AppError::Expired),
-            TOKEN_SUBMITTED => Err(AppError::AlreadySubmitted),
-            TOKEN_NOT_OPEN => Err(AppError::NotYetOpen),
-            TOKEN_REVOKED => Err(AppError::Revoked),
-            TOKEN_OFFLINE => Err(AppError::NetworkUnavailable),
-            TOKEN_SHORT => Ok(120),
-            TOKEN_OK => Ok(DEFAULT_DURATION_S),
-            _ => Err(AppError::InvalidLink),
+    ///
+    /// `allow_unopened` mirrors the one exception the real resolver makes: a
+    /// link that is early is not dead, and the preview is allowed to describe
+    /// it. The claim is not, so `TOKEN_NOT_OPEN` still refuses at Begin.
+    fn resolve(token: &str, allow_unopened: bool) -> AppResult<Resolved> {
+        let (duration_s, opens_at) = match token {
+            TOKEN_EXPIRED => return Err(AppError::Expired),
+            TOKEN_SUBMITTED => return Err(AppError::AlreadySubmitted),
+            TOKEN_REVOKED => return Err(AppError::Revoked),
+            TOKEN_OFFLINE => return Err(AppError::NetworkUnavailable),
+            // Far enough out to read as a date rather than a countdown, so the
+            // waiting screen gets exercised in the shape a student meets it.
+            TOKEN_NOT_OPEN => (DEFAULT_DURATION_S, Some(now_epoch_secs() + 26 * 60 * 60)),
+            TOKEN_SOON => (DEFAULT_DURATION_S, Some(now_epoch_secs() + 30)),
+            TOKEN_SHORT => (120, None),
+            TOKEN_OK => (DEFAULT_DURATION_S, None),
+            _ => return Err(AppError::InvalidLink),
+        };
+
+        if opens_at.is_some() && !allow_unopened {
+            return Err(AppError::NotYetOpen);
         }
+
+        Ok(Resolved {
+            duration_s,
+            opens_at,
+        })
     }
 
     pub async fn preview(&self, token: String) -> AppResult<PreviewResponse> {
         Self::latency().await;
-        let duration_s = Self::resolve(&token)?;
-        let exam = fixture_exam(duration_s);
+        let resolved = Self::resolve(&token, true)?;
+        let exam = fixture_exam(resolved.duration_s);
         Ok(PreviewResponse {
             title: exam.title,
             description: Some("Covers the light-dependent reactions.".to_string()),
-            duration_s,
+            duration_s: resolved.duration_s,
             allow_backtracking: exam.allow_backtracking,
             shuffle_questions: exam.shuffle_questions,
             question_count: exam.questions.len() as u32,
+            opens_at: resolved.opens_at,
+            server_time: Some(now_epoch_secs()),
         })
     }
 
     pub async fn start_session(&self, token: String) -> AppResult<StartSessionResponse> {
         Self::latency().await;
 
-        let duration_s = Self::resolve(&token)?;
+        let duration_s = Self::resolve(&token, false)?.duration_s;
 
         let now = now_epoch_secs();
         let expires_at = now + duration_s;

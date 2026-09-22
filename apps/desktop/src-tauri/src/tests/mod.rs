@@ -123,12 +123,65 @@ fn previewing_a_link_shows_the_configuration_but_claims_nothing_and_leaks_nothin
             "description",
             "duration_s",
             "question_count",
+            "server_time",
             "shuffle_questions",
             "title"
         ]
     );
 
+    // `opens_at` is absent, not null, on a link that is open. Its absence is
+    // what the frontend reads as "you may start", so it must not appear here.
+    assert!(preview["exam"].get("opens_at").is_none());
+
     // And nothing was claimed: the student is still idle.
+    assert!(!app.state::<AppState>().session.is_active());
+}
+
+#[test]
+fn a_link_that_has_not_opened_yet_is_described_rather_than_refused() {
+    let (app, window) = test_app();
+
+    let preview = call(
+        &window,
+        "preview_link",
+        json!({ "raw": "http://localhost:3000/e/mockexamtoken000000004" }),
+    )
+    .expect("an early link should still describe itself");
+
+    // The configuration a student needs in order to know they have the right
+    // link, plus the one fact that was missing before: when it opens.
+    assert!(preview["exam"]["title"].as_str().is_some());
+    assert!(preview["exam"]["question_count"].as_u64().unwrap_or(0) > 0);
+
+    let opens_at = preview["exam"]["opens_at"]
+        .as_u64()
+        .expect("an early link must say when it opens");
+    let server_time = preview["exam"]["server_time"]
+        .as_u64()
+        .expect("and against which clock to measure the wait");
+    assert!(
+        opens_at > server_time,
+        "opens_at {opens_at} should still be ahead of server_time {server_time}"
+    );
+
+    assert!(!app.state::<AppState>().session.is_active());
+}
+
+#[test]
+fn describing_an_early_link_does_not_let_one_be_started() {
+    let (app, window) = test_app();
+
+    // The gate that matters is the claim, and it did not move. Preview and
+    // claim share a resolver here exactly as they do on the real backend, so
+    // this is the assertion that the one exception stayed an exception.
+    let err = call(
+        &window,
+        "start_session",
+        json!({ "raw": "http://localhost:3000/e/mockexamtoken000000004" }),
+    )
+    .expect_err("an early link must not start");
+
+    assert_eq!(error_code(&err), "not_yet_open");
     assert!(!app.state::<AppState>().session.is_active());
 }
 

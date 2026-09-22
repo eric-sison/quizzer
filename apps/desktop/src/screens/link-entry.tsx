@@ -1,5 +1,12 @@
 import * as React from "react"
-import { AlertCircle, Info, Loader2, Lock, ShieldCheck } from "lucide-react"
+import {
+  AlertCircle,
+  CalendarClock,
+  Info,
+  Loader2,
+  Lock,
+  ShieldCheck,
+} from "lucide-react"
 
 import { Button } from "@workspace/ui/components/button"
 import { Input } from "@workspace/ui/components/input"
@@ -67,7 +74,41 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
     }
   }, [value])
 
-  const canBegin = Boolean(info) && !busy
+  // The absence of `opens_at`, not a comparison against this machine's clock,
+  // is what says the exam may be started. The server decides that and says so
+  // in the shape of its answer.
+  const shut = preview?.exam.opens_at !== undefined
+  const opensIn = useOpensIn(preview)
+  const dueToOpen = shut && opensIn !== null && opensIn <= 0
+
+  // The wait is over by our reckoning. Ask the server rather than enabling the
+  // button on the strength of a countdown, and keep asking: a clock a few
+  // seconds fast would otherwise offer a Begin that is refused on press.
+  React.useEffect(() => {
+    if (!dueToOpen) return
+    const raw = value.trim()
+    if (!raw) return
+
+    let cancelled = false
+    const recheck = async () => {
+      try {
+        const config = await previewLink(raw)
+        if (!cancelled) setPreview(config)
+      } catch {
+        // Keep the card we have. The wait it describes is still true, and
+        // blanking the screen because one poll missed helps nobody.
+      }
+    }
+
+    void recheck()
+    const timer = window.setInterval(() => void recheck(), 5_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [dueToOpen, value])
+
+  const canBegin = Boolean(info) && !busy && !shut
   const message = error?.message ?? localError
 
   return (
@@ -117,7 +158,7 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
             // runs at all.
             <Notice tone="bad">{previewError}</Notice>
           ) : preview ? (
-            <ExamConfigCard preview={preview} />
+            <ExamConfigCard preview={preview} opensIn={opensIn} />
           ) : info ? (
             <Notice tone="ok">
               Ready to connect to <span className="font-mono">{info.host}</span>{" "}
@@ -166,6 +207,52 @@ export function LinkEntry({ onBegin, busy, error }: LinkEntryProps) {
 }
 
 /**
+ * Seconds until the link opens, or null when it is already open.
+ *
+ * Measured against the server's clock, not this machine's. The server sends
+ * its own time with the preview and the offset between the two is fixed when
+ * that answer arrives, so a clock that is wrong by hours, or changed halfway
+ * through the wait, moves the countdown by nothing. The tick itself is local,
+ * which is fine: a drifting tick is a second here or there.
+ *
+ * It is not a security control - the server refuses an early session claim
+ * whatever this says. It is so a screen somebody is sitting and watching does
+ * not tell them the wrong thing.
+ */
+function useOpensIn(preview: LinkPreview | null): number | null {
+  const opensAt = preview?.exam.opens_at
+  const serverTime = preview?.exam.server_time
+  const [seconds, setSeconds] = React.useState<number | null>(null)
+
+  React.useEffect(() => {
+    if (opensAt === undefined) return
+
+    // Fixed here, when the answer carrying it arrives, rather than on every
+    // tick: a clock changed halfway through the wait then moves the countdown
+    // by nothing. Reading the clock belongs in an effect, which is also why
+    // the first value is scheduled rather than assigned during render.
+    const skewMs =
+      serverTime === undefined ? 0 : serverTime * 1_000 - Date.now()
+
+    const tick = () =>
+      setSeconds(
+        Math.max(0, Math.round((opensAt * 1_000 - (Date.now() + skewMs)) / 1_000))
+      )
+
+    const first = window.setTimeout(tick, 0)
+    const timer = window.setInterval(tick, 1_000)
+    return () => {
+      window.clearTimeout(first)
+      window.clearInterval(timer)
+    }
+  }, [opensAt, serverTime])
+
+  // Gated on the link rather than cleared, so a stale count from a previous
+  // link can never be read as this one's.
+  return opensAt === undefined ? null : seconds
+}
+
+/**
  * One line under the field, in the three flavours it comes in.
  *
  * They all occupy the same place and are told apart by an icon as well as a
@@ -199,6 +286,105 @@ function Notice({
   )
 }
 
+/**
+ * When the link opens, and how long that is from now.
+ *
+ * Neutral rather than alarming: an exam that has not started yet is not a
+ * problem with the link, and colouring it like one would send a student back
+ * to their teacher asking for a new one. The clock icon and the disabled
+ * button carry the state; the words carry the detail.
+ */
+function OpensAtNotice({
+  at,
+  opensIn,
+}: {
+  /** Epoch seconds. */
+  at: number
+  opensIn: number | null
+}) {
+  const due = opensIn !== null && opensIn <= 0
+
+  return (
+    <div className="flex items-start gap-2.5 rounded-md border bg-background p-3">
+      <CalendarClock
+        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <p className="text-sm font-medium">
+          {due ? "Opening now" : `Opens ${formatOpening(new Date(at * 1_000))}`}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {due
+            ? "Checking with the server."
+            : opensIn === null
+              ? "You can leave this window open."
+              : `That is ${formatWait(opensIn)} from now. You can leave this window open: Begin turns on by itself.`}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The opening time, dated only as far as it needs to be. "tomorrow at 9:00 AM"
+ * is read at a glance; "Wed 23 Sep 2026 at 9:00 AM" has to be worked out
+ * against what day it is now, which is work the screen can do instead.
+ */
+function formatOpening(at: Date): string {
+  const time = at.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  })
+
+  const days = calendarDaysAhead(at)
+  if (days === 0) return `today at ${time}`
+  if (days === 1) return `tomorrow at ${time}`
+
+  const date = at.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(days > 300 ? { year: "numeric" } : {}),
+  })
+  return `${date} at ${time}`
+}
+
+/**
+ * Whole calendar days between today and `at`, which is not the same as the
+ * hours between them: 11pm to 1am is two hours and one sleep, and "tomorrow"
+ * is what a student would call it.
+ */
+function calendarDaysAhead(at: Date): number {
+  const midnight = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  return Math.round((midnight(at) - midnight(new Date())) / 86_400_000)
+}
+
+/**
+ * The wait, at the precision it is worth stating.
+ *
+ * Seconds matter in the last minute and are noise in the last day. "1 d 3 h
+ * 27 min 14 s" is a figure nobody reads, and it rewrites itself every second
+ * on a screen somebody may be sitting in front of for an hour.
+ */
+function formatWait(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`
+
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const rest = minutes % 60
+    return rest ? `${hours} h ${rest} min` : `${hours} h`
+  }
+
+  const days = Math.floor(hours / 24)
+  const rest = hours % 24
+  return rest ? `${days} d ${rest} h` : `${days} d`
+}
+
 function formatDuration(seconds: number): string {
   const minutes = Math.max(1, Math.round(seconds / 60))
   if (minutes < 60) return `${minutes} min`
@@ -212,7 +398,14 @@ function formatDuration(seconds: number): string {
  * configuration, never its questions - the server does not reveal those until
  * a session is claimed.
  */
-function ExamConfigCard({ preview }: { preview: LinkPreview }) {
+function ExamConfigCard({
+  preview,
+  opensIn,
+}: {
+  preview: LinkPreview
+  /** Seconds left of the wait, or null once the link is open. */
+  opensIn: number | null
+}) {
   const { exam } = preview
   const rows: Array<[string, string]> = [
     ["Questions", String(exam.question_count)],
@@ -231,6 +424,14 @@ function ExamConfigCard({ preview }: { preview: LinkPreview }) {
           </p>
         ) : null}
       </div>
+
+      {/* Above the configuration rather than instead of it. A student who has
+          just pasted a link wants to know three things, and "not open yet" on
+          its own answers one: they also want to see that this is the exam they
+          were expecting, and how long the wait is in terms they can act on. */}
+      {exam.opens_at !== undefined ? (
+        <OpensAtNotice at={exam.opens_at} opensIn={opensIn} />
+      ) : null}
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         {rows.map(([label, valueText]) => (

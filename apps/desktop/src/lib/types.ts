@@ -60,6 +60,14 @@ export type LinkPreview = {
     allow_backtracking: boolean
     shuffle_questions: boolean
     question_count: number
+    /**
+     * Epoch seconds. Present only while the link is still shut, so its
+     * absence, not a comparison against this machine's clock, is what says
+     * the exam may be started.
+     */
+    opens_at?: number
+    /** The server's clock when it answered, to measure the wait against. */
+    server_time?: number
   }
 }
 
